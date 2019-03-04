@@ -8,11 +8,11 @@
 #include <Core/SortDescription.h>
 #include <Core/SortCursor.h>
 
-#include <DataStreams/IProfilingBlockInputStream.h>
+#include <DataStreams/IBlockInputStream.h>
 #include <DataStreams/NativeBlockInputStream.h>
 
 #include <IO/ReadBufferFromFile.h>
-#include <IO/CompressedReadBuffer.h>
+#include <Compression/CompressedReadBuffer.h>
 
 
 namespace DB
@@ -25,12 +25,12 @@ namespace DB
 /** Part of implementation. Merging array of ready (already read from somewhere) blocks.
   * Returns result of merge as stream of blocks, not more than 'max_merged_block_size' rows in each.
   */
-class MergeSortingBlocksBlockInputStream : public IProfilingBlockInputStream
+class MergeSortingBlocksBlockInputStream : public IBlockInputStream
 {
 public:
     /// limit - if not 0, allowed to return just first 'limit' rows in sorted order.
     MergeSortingBlocksBlockInputStream(Blocks & blocks_, SortDescription & description_,
-        size_t max_merged_block_size_, size_t limit_ = 0);
+        size_t max_merged_block_size_, UInt64 limit_ = 0);
 
     String getName() const override { return "MergeSortingBlocks"; }
 
@@ -47,7 +47,7 @@ private:
     Block header;
     SortDescription description;
     size_t max_merged_block_size;
-    size_t limit;
+    UInt64 limit;
     size_t total_merged_rows = 0;
 
     using CursorImpls = std::vector<SortCursorImpl>;
@@ -66,12 +66,13 @@ private:
 };
 
 
-class MergeSortingBlockInputStream : public IProfilingBlockInputStream
+class MergeSortingBlockInputStream : public IBlockInputStream
 {
 public:
     /// limit - if not 0, allowed to return just first 'limit' rows in sorted order.
     MergeSortingBlockInputStream(const BlockInputStreamPtr & input, SortDescription & description_,
-        size_t max_merged_block_size_, size_t limit_,
+        size_t max_merged_block_size_, UInt64 limit_,
+        size_t max_bytes_before_remerge_,
         size_t max_bytes_before_external_sort_, const std::string & tmp_path_);
 
     String getName() const override { return "MergeSorting"; }
@@ -87,14 +88,16 @@ protected:
 private:
     SortDescription description;
     size_t max_merged_block_size;
-    size_t limit;
+    UInt64 limit;
 
+    size_t max_bytes_before_remerge;
     size_t max_bytes_before_external_sort;
     const std::string tmp_path;
 
     Logger * log = &Logger::get("MergeSortingBlockInputStream");
 
     Blocks blocks;
+    size_t sum_rows_in_blocks = 0;
     size_t sum_bytes_in_blocks = 0;
     std::unique_ptr<IBlockInputStream> impl;
 
@@ -121,6 +124,10 @@ private:
     std::vector<std::unique_ptr<TemporaryFileStream>> temporary_inputs;
 
     BlockInputStreams inputs_to_merge;
-};
 
+    /// Merge all accumulated blocks to keep no more than limit rows.
+    void remerge();
+    /// If remerge doesn't save memory at least several times, mark it as useless and don't do it anymore.
+    bool remerge_is_useful = true;
+};
 }

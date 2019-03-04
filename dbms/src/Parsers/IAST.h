@@ -3,10 +3,10 @@
 #include <set>
 #include <memory>
 #include <ostream>
+#include <algorithm>
 
 #include <Core/Types.h>
 #include <Common/Exception.h>
-#include <Parsers/StringRange.h>
 #include <Parsers/IdentifierQuotingStyle.h>
 
 
@@ -39,12 +39,11 @@ class IAST : public std::enable_shared_from_this<IAST>
 {
 public:
     ASTs children;
-    StringRange range;
-
-    /// This pointer does not allow it to be deleted while the range refers to it.
-    StringPtr owned_string;
 
     virtual ~IAST() = default;
+    IAST() = default;
+    IAST(const IAST &) = default;
+    IAST & operator=(const IAST &) = default;
 
     /** Get the canonical name of the column if the element is a column */
     String getColumnName() const;
@@ -66,7 +65,7 @@ public:
     }
 
     /** Get the text that identifies this element. */
-    virtual String getID() const = 0;
+    virtual String getID(char delimiter = '_') const = 0;
 
     ASTPtr ptr() { return shared_from_this(); }
 
@@ -77,7 +76,8 @@ public:
       */
     using Hash = std::pair<UInt64, UInt64>;
     Hash getTreeHash() const;
-    void getTreeHashImpl(SipHash & hash_state) const;
+    void updateTreeHash(SipHash & hash_state) const;
+    virtual void updateTreeHashImpl(SipHash & hash_state) const;
 
     void dumpTree(std::ostream & ostr, size_t indent = 0) const
     {
@@ -164,7 +164,7 @@ public:
             nl_or_ws = one_line ? ' ' : '\n';
         }
 
-        void writeIdentifier(const String & name, WriteBuffer & out) const;
+        void writeIdentifier(const String & name) const;
     };
 
     /// State. For example, a set of nodes can be remembered, which we already walk through.
@@ -192,11 +192,7 @@ public:
 
     virtual void formatImpl(const FormatSettings & /*settings*/, FormatState & /*state*/, FormatStateStacked /*frame*/) const
     {
-        throw Exception("Unknown element in AST: " + getID()
-            + ((range.first && (range.second > range.first))
-                ? " '" + std::string(range.first, range.second - range.first) + "'"
-                : ""),
-            ErrorCodes::UNKNOWN_ELEMENT_IN_AST);
+        throw Exception("Unknown element in AST: " + getID(), ErrorCodes::UNKNOWN_ELEMENT_IN_AST);
     }
 
     void cloneChildren();
@@ -217,6 +213,5 @@ private:
 
 /// Surrounds an identifier by back quotes if it is necessary.
 String backQuoteIfNeed(const String & x);
-
 
 }

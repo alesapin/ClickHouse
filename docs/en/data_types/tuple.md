@@ -1,16 +1,15 @@
-<a name="data_type-tuple"></a>
 
 # Tuple(T1, T2, ...)
 
-A tuple of elements of any [type](index.md#data_types). There can be one or more types of elements in a tuple.
+A tuple of elements, each having an individual [type](index.md#data_types).
 
-You can't store tuples in tables (other than Memory tables). They are used for temporary column grouping. Columns can be grouped when an IN expression is used in a query, and for specifying certain formal parameters of lambda functions. For more information, see the sections [IN operators](../query_language/select.md#in_operators) and [Higher order functions](../query_language/functions/higher_order_functions.md#higher_order_functions).
+You can't store tuples in tables (other than Memory tables). They are used for temporary column grouping. Columns can be grouped when an IN expression is used in a query, and for specifying certain formal parameters of lambda functions. For more information, see the sections [IN operators](../query_language/select.md) and [Higher order functions](../query_language/functions/higher_order_functions.md).
 
 Tuples can be the result of a query. In this case, for text formats other than JSON, values are comma-separated in brackets. In JSON formats, tuples are output as arrays (in square brackets).
 
 ## Creating a tuple
 
-You can use a function to create a tuple
+You can use a function to create a tuple:
 
 ```
 tuple(T1, T2, ...)
@@ -34,12 +33,12 @@ SELECT
 
 ## Working with data types
 
-When creating a tuple on the fly, ClickHouse automatically detects the type of each argument as the minimum of the types which can store the argument value. If the argument is [NULL](../query_language/syntax.md#null-literal), the type of the tuple element is [Nullable](nullable.md#data_type-nullable).
+When creating a tuple on the fly, ClickHouse automatically detects the type of each argument as the minimum of the types which can store the argument value. If the argument is [NULL](../query_language/syntax.md#null-literal), the type of the tuple element is [Nullable](nullable.md).
 
 Example of automatic data type detection:
 
 ```
-SELECT tuple(1,NULL) AS x, toTypeName(x)
+SELECT tuple(1, NULL) AS x, toTypeName(x)
 
 SELECT
     (1, NULL) AS x,
@@ -52,3 +51,5 @@ SELECT
 1 rows in set. Elapsed: 0.002 sec.
 ```
 
+
+[Original article](https://clickhouse.yandex/docs/en/data_types/tuple/) <!--hide-->

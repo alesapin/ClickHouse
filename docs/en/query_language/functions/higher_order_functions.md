@@ -1,5 +1,3 @@
-<a name="higher_order_functions"></a>
-
 # Higher-order functions
 
 ## `->` operator, lambda(params, expr) function
@@ -24,17 +22,17 @@ Returns an array containing only the elements in 'arr1' for which 'func' returns
 
 Examples:
 
-```sql
+``` sql
 SELECT arrayFilter(x -> x LIKE '%World%', ['Hello', 'abc World']) AS res
 ```
 
-```text
+```
 ┌─res───────────┐
 │ ['abc World'] │
 └───────────────┘
 ```
 
-```sql
+``` sql
 SELECT
     arrayFilter(
         (i, x) -> x LIKE '%World%',
@@ -43,7 +41,7 @@ SELECT
     AS res
 ```
 
-```text
+```
 ┌─res─┐
 │ [2] │
 └─────┘
@@ -79,29 +77,43 @@ Returns an array of partial sums of elements in the source array (a running sum)
 
 Example:
 
-```sql
+``` sql
 SELECT arrayCumSum([1, 1, 1, 1]) AS res
 ```
 
-```text
+```
 ┌─res──────────┐
 │ [1, 2, 3, 4] │
 └──────────────┘
 ```
 
+### arrayCumSumNonNegative(arr)
+
+Same as arrayCumSum, returns an array of partial sums of elements in the source array (a running sum). Different arrayCumSum, when then returned value contains a value less than zero, the value is replace with zero and the subsequent calculation is performed with zero parameters. For example:
+
+``` sql
+SELECT arrayCumSumNonNegative([1, 1, -4, 1]) AS res
+```
+
+```
+┌─res───────┐
+│ [1,2,0,1] │
+└───────────┘
+```
+
 ### arraySort(\[func,\] arr1, ...)
 
-Returns the `arr1` array sorted in ascending order. If `func`  is set, the sort order is determined by the result of the `func` function on the elements of the array or arrays.
+Returns an array as result of sorting the elements of `arr1` in ascending order. If the `func` function is specified, sorting order is determined by the result of the function `func` applied to the elements of array (arrays)  
 
-To improve sorting efficiency, we use the [Schwartzian Transform](https://en.wikipedia.org/wiki/%D0%9F%D1%80%D0%B5%D0%BE%D0%B1%D1%80%D0%B0%D0%B7%D0%BE%D0%B2%D0%B0%D0%BD%D0%B8%D0%B5_%D0%A8%D0%B2%D0%B0%D1%80%D1%86%D0%B0).
+The [Schwartzian transform](https://en.wikipedia.org/wiki/Schwartzian_transform) is used to impove sorting efficiency.
 
 Example:
 
-```sql
+``` sql
 SELECT arraySort((x, y) -> y, ['hello', 'world'], [2, 1]);
 ```
 
-```text
+```
 ┌─res────────────────┐
 │ ['world', 'hello'] │
 └────────────────────┘
@@ -109,5 +121,11 @@ SELECT arraySort((x, y) -> y, ['hello', 'world'], [2, 1]);
 
 ### arrayReverseSort(\[func,\] arr1, ...)
 
-Returns the `arr1` array sorted in descending order. If `func`  is set, the sort order is determined by the result of the `func` function on the elements of the array or arrays.
+Returns an array as result of sorting the elements of `arr1` in descending order. If the `func` function is specified, sorting order is determined by the result of the function `func` applied to the elements of array (arrays)  
 
+
+
+
+
+
+[Original article](https://clickhouse.yandex/docs/en/query_language/functions/higher_order_functions/) <!--hide-->

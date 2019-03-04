@@ -39,7 +39,11 @@ StorageSystemTables::StorageSystemTables(const std::string & name_)
         {"dependencies_database", std::make_shared<DataTypeArray>(std::make_shared<DataTypeString>())},
         {"dependencies_table", std::make_shared<DataTypeArray>(std::make_shared<DataTypeString>())},
         {"create_table_query", std::make_shared<DataTypeString>()},
-        {"engine_full", std::make_shared<DataTypeString>()}
+        {"engine_full", std::make_shared<DataTypeString>()},
+        {"partition_key", std::make_shared<DataTypeString>()},
+        {"sorting_key", std::make_shared<DataTypeString>()},
+        {"primary_key", std::make_shared<DataTypeString>()},
+        {"sampling_key", std::make_shared<DataTypeString>()},
     }));
 }
 
@@ -50,22 +54,22 @@ static ColumnPtr getFilteredDatabases(const ASTPtr & query, const Context & cont
     for (const auto & db : context.getDatabases())
         column->insert(db.first);
 
-    Block block { ColumnWithTypeAndName( std::move(column), std::make_shared<DataTypeString>(), "database" ) };
+    Block block { ColumnWithTypeAndName(std::move(column), std::make_shared<DataTypeString>(), "database") };
     VirtualColumnUtils::filterBlockWithQuery(query, block, context);
     return block.getByPosition(0).column;
 }
 
 
-class TablesBlockInputStream : public IProfilingBlockInputStream
+class TablesBlockInputStream : public IBlockInputStream
 {
 public:
     TablesBlockInputStream(
         std::vector<UInt8> columns_mask,
         Block header,
-        size_t max_block_size,
+        UInt64 max_block_size,
         ColumnPtr databases,
         const Context & context)
-        : columns_mask(columns_mask), header(header), max_block_size(max_block_size), databases(std::move(databases)), context(context) {}
+        : columns_mask(std::move(columns_mask)), header(std::move(header)), max_block_size(max_block_size), databases(std::move(databases)), context(context) {}
 
     String getName() const override { return "Tables"; }
     Block getHeader() const override { return header; }
@@ -100,7 +104,7 @@ protected:
                 break;
             }
 
-            /// This is for temporary tables.  They are output in single block regardless to max_block_size.
+            /// This is for temporary tables. They are output in single block regardless to max_block_size.
             if (database_idx >= databases->size())
             {
                 if (context.hasSessionContext())
@@ -122,7 +126,7 @@ protected:
                             res_columns[res_index++]->insert(table.second->getName());
 
                         if (columns_mask[src_index++])
-                            res_columns[res_index++]->insert(UInt64(1));
+                            res_columns[res_index++]->insert(1u);
 
                         if (columns_mask[src_index++])
                             res_columns[res_index++]->insertDefault();
@@ -144,6 +148,18 @@ protected:
 
                         if (columns_mask[src_index++])
                             res_columns[res_index++]->insert(table.second->getName());
+
+                        if (columns_mask[src_index++])
+                            res_columns[res_index++]->insertDefault();
+
+                        if (columns_mask[src_index++])
+                            res_columns[res_index++]->insertDefault();
+
+                        if (columns_mask[src_index++])
+                            res_columns[res_index++]->insertDefault();
+
+                        if (columns_mask[src_index++])
+                            res_columns[res_index++]->insertDefault();
                     }
                 }
 
@@ -157,8 +173,12 @@ protected:
 
             for (; rows_count < max_block_size && tables_it->isValid(); tables_it->next())
             {
-                ++rows_count;
                 auto table_name = tables_it->name();
+                const auto table = context.tryGetTable(database_name, table_name);
+                if (!table)
+                    continue;
+
+                ++rows_count;
 
                 size_t src_index = 0;
                 size_t res_index = 0;
@@ -173,7 +193,7 @@ protected:
                     res_columns[res_index++]->insert(tables_it->table()->getName());
 
                 if (columns_mask[src_index++])
-                    res_columns[res_index++]->insert(UInt64(0));
+                    res_columns[res_index++]->insert(0u);  // is_temporary
 
                 if (columns_mask[src_index++])
                     res_columns[res_index++]->insert(tables_it->table()->getDataPath());
@@ -234,6 +254,41 @@ protected:
                         res_columns[res_index++]->insert(engine_full);
                     }
                 }
+                else
+                    src_index += 2;
+
+                ASTPtr expression_ptr;
+                if (columns_mask[src_index++])
+                {
+                    if ((expression_ptr = table->getPartitionKeyAST()))
+                        res_columns[res_index++]->insert(queryToString(expression_ptr));
+                    else
+                        res_columns[res_index++]->insertDefault();
+                }
+
+                if (columns_mask[src_index++])
+                {
+                    if ((expression_ptr = table->getSortingKeyAST()))
+                        res_columns[res_index++]->insert(queryToString(expression_ptr));
+                    else
+                        res_columns[res_index++]->insertDefault();
+                }
+
+                if (columns_mask[src_index++])
+                {
+                    if ((expression_ptr = table->getPrimaryKeyAST()))
+                        res_columns[res_index++]->insert(queryToString(expression_ptr));
+                    else
+                        res_columns[res_index++]->insertDefault();
+                }
+
+                if (columns_mask[src_index++])
+                {
+                    if ((expression_ptr = table->getSamplingKeyAST()))
+                        res_columns[res_index++]->insert(queryToString(expression_ptr));
+                    else
+                        res_columns[res_index++]->insertDefault();
+                }
             }
         }
 
@@ -243,7 +298,7 @@ protected:
 private:
     std::vector<UInt8> columns_mask;
     Block header;
-    size_t max_block_size;
+    UInt64 max_block_size;
     ColumnPtr databases;
     size_t database_idx = 0;
     DatabaseIteratorPtr tables_it;
@@ -258,11 +313,10 @@ BlockInputStreams StorageSystemTables::read(
     const Names & column_names,
     const SelectQueryInfo & query_info,
     const Context & context,
-    QueryProcessingStage::Enum processed_stage,
+    QueryProcessingStage::Enum /*processed_stage*/,
     const size_t max_block_size,
     const unsigned /*num_streams*/)
 {
-    checkQueryProcessingStage(processed_stage, context);
     check(column_names);
 
     /// Create a mask of what columns are needed in the result.

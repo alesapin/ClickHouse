@@ -1,30 +1,24 @@
 #pragma once
 
-#include <cmath>
-
-#include <Common/FieldVisitors.h>
 #include <DataTypes/DataTypesNumber.h>
-#include <DataTypes/DataTypeString.h>
 #include <DataTypes/DataTypeArray.h>
 #include <Columns/ColumnArray.h>
 #include <Columns/ColumnConst.h>
-#include <Columns/ColumnString.h>
 #include <Columns/ColumnsNumber.h>
 
 #include <Functions/IFunction.h>
 #include <Functions/FunctionHelpers.h>
 
-#include <Common/Arena.h>
+#include <IO/WriteHelpers.h>
+
 #include <Common/typeid_cast.h>
-#include <common/StringRef.h>
-#include <Common/HashTable/HashMap.h>
+
 
 namespace DB
 {
 
 namespace ErrorCodes
 {
-    extern const int BAD_ARGUMENTS;
     extern const int NUMBER_OF_ARGUMENTS_DOESNT_MATCH;
 }
 
@@ -116,7 +110,7 @@ public:
 
         const auto type_x = arguments[0];
 
-        if (!type_x->isNumber())
+        if (!isNumber(type_x))
             throw Exception{"Unsupported type " + type_x->getName() + " of first argument of function " + getName() + " must be a numeric type",
                     ErrorCodes::ILLEGAL_TYPE_OF_ARGUMENT};
 
@@ -185,7 +179,7 @@ protected:
         for (size_t k = 0; k < array.size(); ++k)
         {
             const Field & tmp_field = array[k];
-            typename NearestFieldType<CentroidsType>::Type value;
+            NearestFieldType<CentroidsType> value;
             if (!tmp_field.tryGet(value))
                 return false;
 
@@ -227,8 +221,7 @@ protected:
     bool executeOperationTyped(const IColumn * in_untyped, PaddedPODArray<OutputType> & dst, const IColumn * centroids_array_untyped)
     {
         const auto maybe_const = in_untyped->convertToFullColumnIfConst();
-        if (maybe_const)
-            in_untyped = maybe_const.get();
+        in_untyped = maybe_const.get();
 
         const auto in_vector = checkAndGetColumn<ColumnVector<InputType>>(in_untyped);
         if (in_vector)

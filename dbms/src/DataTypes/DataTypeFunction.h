@@ -22,8 +22,9 @@ public:
     DataTypeFunction(const DataTypes & argument_types_ = DataTypes(), const DataTypePtr & return_type_ = nullptr)
             : argument_types(argument_types_), return_type(return_type_) {}
 
-    std::string getName() const override;
+    std::string doGetName() const override;
     const char * getFamilyName() const override { return "Function"; }
+    TypeIndex getTypeId() const override { return TypeIndex::Function; }
 
     const DataTypes & getArgumentTypes() const
     {

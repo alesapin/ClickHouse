@@ -1,3 +1,4 @@
+#include <Storages/ColumnsDescription.h>
 #include <Storages/System/StorageSystemPartsBase.h>
 #include <Common/escapeForFileName.h>
 #include <Columns/ColumnString.h>
@@ -42,7 +43,8 @@ class StoragesInfoStream
 {
 public:
     StoragesInfoStream(const SelectQueryInfo & query_info, const Context & context, bool has_state_column)
-            : has_state_column(has_state_column)
+        : query_id(context.getCurrentQueryId())
+        , has_state_column(has_state_column)
     {
         /// Will apply WHERE to subset of columns and then add more columns.
         /// This is kind of complicated, but we use WHERE to do less work.
@@ -64,14 +66,14 @@ public:
                     database_column_mut->insert(database.first);
             }
             block_to_filter.insert(ColumnWithTypeAndName(
-                    std::move(database_column_mut), std::make_shared<DataTypeString>(), "database"));
+                std::move(database_column_mut), std::make_shared<DataTypeString>(), "database"));
 
             /// Filter block_to_filter with column 'database'.
             VirtualColumnUtils::filterBlockWithQuery(query_info.query, block_to_filter, context);
             rows = block_to_filter.rows();
 
             /// Block contains new columns, update database_column.
-            ColumnPtr database_column = block_to_filter.getByName("database").column;
+            ColumnPtr database_column_ = block_to_filter.getByName("database").column;
 
             if (rows)
             {
@@ -81,7 +83,7 @@ public:
 
                 for (size_t i = 0; i < rows; ++i)
                 {
-                    String database_name = (*database_column)[i].get<String>();
+                    String database_name = (*database_column_)[i].get<String>();
                     const DatabasePtr database = databases.at(database_name);
 
                     offsets[i] = i ? offsets[i - 1] : 0;
@@ -146,10 +148,10 @@ public:
             info.database = (*database_column)[next_row].get<String>();
             info.table = (*table_column)[next_row].get<String>();
 
-            auto isSameTable = [& info, this] (size_t next_row) -> bool
+            auto isSameTable = [&info, this] (size_t row) -> bool
             {
-                return (*database_column)[next_row].get<String>() == info.database &&
-                       (*table_column)[next_row].get<String>() == info.table;
+                return (*database_column)[row].get<String>() == info.database &&
+                       (*table_column)[row].get<String>() == info.table;
             };
 
             /// What 'active' value we need.
@@ -165,7 +167,7 @@ public:
             try
             {
                 /// For table not to be dropped and set of columns to remain constant.
-                info.table_lock = info.storage->lockStructure(false, __PRETTY_FUNCTION__);
+                info.table_lock = info.storage->lockStructure(false, query_id);
             }
             catch (const Exception & e)
             {
@@ -219,6 +221,8 @@ public:
     }
 
 private:
+    String query_id;
+
     bool has_state_column;
 
     ColumnPtr database_column;
@@ -237,12 +241,11 @@ BlockInputStreams StorageSystemPartsBase::read(
         const Names & column_names,
         const SelectQueryInfo & query_info,
         const Context & context,
-        QueryProcessingStage::Enum processed_stage,
+        QueryProcessingStage::Enum /*processed_stage*/,
         const size_t /*max_block_size*/,
         const unsigned /*num_streams*/)
 {
     bool has_state_column = hasStateColumn(column_names);
-    checkQueryProcessingStage(processed_stage, context);
 
     StoragesInfoStream stream(query_info, context, has_state_column);
 
@@ -307,7 +310,7 @@ StorageSystemPartsBase::StorageSystemPartsBase(std::string name_, NamesAndTypesL
     add_alias("bytes", "bytes_on_disk");
     add_alias("marks_size", "marks_bytes");
 
-    setColumns(ColumnsDescription(std::move(columns_), {}, std::move(aliases), std::move(defaults)));
+    setColumns(ColumnsDescription(std::move(columns_), {}, std::move(aliases), std::move(defaults), ColumnComments{}, ColumnCodecs{}));
 }
 
 }

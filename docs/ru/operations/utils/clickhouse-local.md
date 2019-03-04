@@ -1,8 +1,7 @@
-<a name="utils-clickhouse-local"></a>
 
 # clickhouse-local
 
-Принимает на вход данные, которые можно представить в табличном виде и выполняет над ними операции, заданные на [языке запросов](../../query_language/index.md#queries) ClickHouse.
+Принимает на вход данные, которые можно представить в табличном виде и выполняет над ними операции, заданные на [языке запросов](../../query_language/index.md) ClickHouse.
 
 `clickhouse-local` использует движок сервера ClickHouse, т.е. поддерживает все форматы данных и движки таблиц, с которыми работает ClickHouse, при этом для выполнения операций не требуется запущенный сервер.
 
@@ -66,3 +65,5 @@ Read 186 rows, 4.15 KiB in 0.035 sec., 5302 rows/sec., 118.34 KiB/sec.
 ├──────────┼──────────┤
 ...
 ```
+
+[Оригинальная статья](https://clickhouse.yandex/docs/ru/operations/utils/clickhouse-local/) <!--hide-->

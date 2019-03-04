@@ -10,11 +10,14 @@ namespace DB
 {
 
 
-/** Aggregate function that takes arbitary number of arbitary arguments and does nothing.
+/** Aggregate function that takes arbitrary number of arbitrary arguments and does nothing.
   */
 class AggregateFunctionNothing final : public IAggregateFunctionHelper<AggregateFunctionNothing>
 {
 public:
+    AggregateFunctionNothing(const DataTypes & arguments, const Array & params)
+        : IAggregateFunctionHelper<AggregateFunctionNothing>(arguments, params) {}
+
     String getName() const override
     {
         return "nothing";

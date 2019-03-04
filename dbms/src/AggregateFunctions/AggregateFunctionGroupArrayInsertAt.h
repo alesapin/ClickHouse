@@ -54,12 +54,14 @@ class AggregateFunctionGroupArrayInsertAtGeneric final
     : public IAggregateFunctionDataHelper<AggregateFunctionGroupArrayInsertAtDataGeneric, AggregateFunctionGroupArrayInsertAtGeneric>
 {
 private:
-    DataTypePtr type;
+    DataTypePtr & type;
     Field default_value;
     UInt64 length_to_resize = 0;    /// zero means - do not do resizing.
 
 public:
     AggregateFunctionGroupArrayInsertAtGeneric(const DataTypes & arguments, const Array & params)
+        : IAggregateFunctionDataHelper<AggregateFunctionGroupArrayInsertAtDataGeneric, AggregateFunctionGroupArrayInsertAtGeneric>(arguments, params)
+        , type(argument_types[0])
     {
         if (!params.empty())
         {
@@ -76,13 +78,8 @@ public:
             }
         }
 
-        if (arguments.size() != 2)
-            throw Exception("Aggregate function " + getName() + " requires two arguments.", ErrorCodes::NUMBER_OF_ARGUMENTS_DOESNT_MATCH);
-
-        if (!arguments[1]->isUnsignedInteger())
+        if (!isUnsignedInteger(arguments[1]))
             throw Exception("Second argument of aggregate function " + getName() + " must be integer.", ErrorCodes::ILLEGAL_TYPE_OF_ARGUMENT);
-
-        type = arguments.front();
 
         if (default_value.isNull())
             default_value = type->getDefault();
@@ -107,7 +104,7 @@ public:
     void add(AggregateDataPtr place, const IColumn ** columns, size_t row_num, Arena *) const override
     {
         /// TODO Do positions need to be 1-based for this function?
-        size_t position = columns[1]->get64(row_num);
+        size_t position = columns[1]->getUInt(row_num);
 
         /// If position is larger than size to which array will be cutted - simply ignore value.
         if (length_to_resize && position >= length_to_resize)
@@ -203,7 +200,7 @@ public:
         for (size_t i = arr.size(); i < result_array_size; ++i)
             to_data.insert(default_value);
 
-        to_offsets.push_back((to_offsets.empty() ? 0 : to_offsets.back()) + result_array_size);
+        to_offsets.push_back(to_offsets.back() + result_array_size);
     }
 
     const char * getHeaderFilePath() const override { return __FILE__; }

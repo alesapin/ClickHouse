@@ -59,14 +59,14 @@ const char * ASTSystemQuery::typeToString(Type type)
             return "START FETCHES";
         case Type::STOP_REPLICATED_SENDS:
             return "STOP REPLICATED SENDS";
-        case Type::START_REPLICATEDS_SENDS:
+        case Type::START_REPLICATED_SENDS:
             return "START REPLICATED SENDS";
         case Type::STOP_REPLICATION_QUEUES:
             return "STOP REPLICATION QUEUES";
         case Type::START_REPLICATION_QUEUES:
             return "START REPLICATION QUEUES";
-        case Type::FLUSH_SYSTEM_TABLES:
-            return "FLUSH SYSTEM TABLES";
+        case Type::FLUSH_LOGS:
+            return "FLUSH LOGS";
         default:
             throw Exception("Unknown SYSTEM query command", ErrorCodes::BAD_TYPE_OF_FIELD);
     }
@@ -97,7 +97,7 @@ void ASTSystemQuery::formatImpl(const FormatSettings & settings, FormatState &, 
         || type == Type::STOP_FETCHES
         || type == Type::START_FETCHES
         || type == Type::STOP_REPLICATED_SENDS
-        || type == Type::START_REPLICATEDS_SENDS
+        || type == Type::START_REPLICATED_SENDS
         || type == Type::STOP_REPLICATION_QUEUES
         || type == Type::START_REPLICATION_QUEUES)
     {

@@ -3,10 +3,10 @@
 #include <Columns/ColumnsCommon.h>
 #include <Columns/ColumnNothing.h>
 #include <ext/range.h>
-
-#if __SSE2__
-#include <emmintrin.h>
 #include <DataTypes/DataTypeNothing.h>
+
+#ifdef __SSE2__
+#include <emmintrin.h>
 #endif
 
 namespace DB
@@ -254,12 +254,12 @@ void MergeTreeRangeReader::ReadResult::optimize()
     }
 }
 
-size_t MergeTreeRangeReader::ReadResult::countZeroTails(const IColumn::Filter & filter, NumRows & zero_tails) const
+size_t MergeTreeRangeReader::ReadResult::countZeroTails(const IColumn::Filter & filter_vec, NumRows & zero_tails) const
 {
     zero_tails.resize(0);
     zero_tails.reserve(rows_per_granule.size());
 
-    auto filter_data = filter.data();
+    auto filter_data = filter_vec.data();
 
     size_t total_zero_rows_in_tails = 0;
 
@@ -274,11 +274,11 @@ size_t MergeTreeRangeReader::ReadResult::countZeroTails(const IColumn::Filter & 
     return total_zero_rows_in_tails;
 }
 
-void MergeTreeRangeReader::ReadResult::collapseZeroTails(const IColumn::Filter & filter, IColumn::Filter & new_filter,
+void MergeTreeRangeReader::ReadResult::collapseZeroTails(const IColumn::Filter & filter_vec, IColumn::Filter & new_filter_vec,
                                                          const NumRows & zero_tails)
 {
-    auto filter_data = filter.data();
-    auto new_filter_data = new_filter.data();
+    auto filter_data = filter_vec.data();
+    auto new_filter_data = new_filter_vec.data();
 
     for (auto i : ext::range(0, rows_per_granule.size()))
     {
@@ -294,14 +294,14 @@ void MergeTreeRangeReader::ReadResult::collapseZeroTails(const IColumn::Filter &
         filter_data += filtered_rows_num_at_granule_end;
     }
 
-    new_filter.resize(new_filter_data - new_filter.data());
+    new_filter_vec.resize(new_filter_data - new_filter_vec.data());
 }
 
 size_t MergeTreeRangeReader::ReadResult::numZerosInTail(const UInt8 * begin, const UInt8 * end)
 {
     size_t count = 0;
 
-#if __SSE2__ && __POPCNT__
+#if defined(__SSE2__) && defined(__POPCNT__)
     const __m128i zero16 = _mm_setzero_si128();
     while (end - begin >= 64)
     {
@@ -409,6 +409,7 @@ MergeTreeRangeReader::ReadResult MergeTreeRangeReader::read(size_t max_rows, Mar
 
     ReadResult read_result;
     size_t prev_bytes = 0;
+    bool should_reorder = false;
 
     if (prev_reader)
     {
@@ -416,29 +417,42 @@ MergeTreeRangeReader::ReadResult MergeTreeRangeReader::read(size_t max_rows, Mar
         prev_bytes = read_result.block.bytes();
         Block block = continueReadingChain(read_result);
 
-        bool should_reorder = false;
         bool should_evaluate_missing_defaults = false;
         if (block)
         {
             /// block.rows() <= read_result.block. We must filter block before adding columns to read_result.block
 
             /// Fill missing columns before filtering because some arrays from Nested may have empty data.
-            merge_tree_reader->fillMissingColumns(block, should_reorder, should_evaluate_missing_defaults);
+            merge_tree_reader->fillMissingColumns(block, should_reorder, should_evaluate_missing_defaults, block.rows());
 
             if (read_result.getFilter())
                 filterBlock(block, read_result.getFilter()->getData());
-
-            for (auto i : ext::range(0, block.columns()))
-                read_result.block.insert(std::move(block.getByPosition(i)));
         }
+        else
+        {
+            size_t num_rows = read_result.block.rows();
+            if (!read_result.block)
+            {
+                if (auto * filter = read_result.getFilter())
+                    num_rows = countBytesInFilter(filter->getData()); /// All columns were removed and filter is not always true.
+                else if (read_result.totalRowsPerGranule())
+                    num_rows = read_result.numReadRows();   /// All columns were removed and filter is always true.
+                /// else filter is always false.
+            }
+
+            /// If block is empty, we still may need to add missing columns.
+            /// In that case use number of rows in result block and don't filter block.
+            if (num_rows)
+                merge_tree_reader->fillMissingColumns(block, should_reorder, should_evaluate_missing_defaults, num_rows);
+        }
+
+        for (auto i : ext::range(0, block.columns()))
+            read_result.block.insert(std::move(block.getByPosition(i)));
 
         if (read_result.block)
         {
             if (should_evaluate_missing_defaults)
                 merge_tree_reader->evaluateMissingDefaults(read_result.block);
-
-            if (should_reorder || always_reorder || block.columns())
-                merge_tree_reader->reorderColumns(read_result.block, *ordered_names, prewhere_column_name);
         }
     }
     else
@@ -446,15 +460,12 @@ MergeTreeRangeReader::ReadResult MergeTreeRangeReader::read(size_t max_rows, Mar
         read_result = startReadingChain(max_rows, ranges);
         if (read_result.block)
         {
-            bool should_reorder;
             bool should_evaluate_missing_defaults;
-            merge_tree_reader->fillMissingColumns(read_result.block, should_reorder, should_evaluate_missing_defaults);
+            merge_tree_reader->fillMissingColumns(read_result.block, should_reorder, should_evaluate_missing_defaults,
+                                                  read_result.block.rows());
 
             if (should_evaluate_missing_defaults)
                 merge_tree_reader->evaluateMissingDefaults(read_result.block);
-
-            if (should_reorder || always_reorder)
-                merge_tree_reader->reorderColumns(read_result.block, *ordered_names, prewhere_column_name);
         }
     }
 
@@ -464,6 +475,10 @@ MergeTreeRangeReader::ReadResult MergeTreeRangeReader::read(size_t max_rows, Mar
     read_result.addNumBytesRead(read_result.block.bytes() - prev_bytes);
 
     executePrewhereActionsAndFilterColumns(read_result);
+
+    if (last_reader_in_chain && (should_reorder || always_reorder))
+        merge_tree_reader->reorderColumns(read_result.block, *ordered_names, prewhere_column_name);
+
     return read_result;
 }
 
@@ -630,7 +645,7 @@ void MergeTreeRangeReader::executePrewhereActionsAndFilterColumns(ReadResult & r
     if (remove_prewhere_column)
         result.block.erase(*prewhere_column_name);
     else
-        prewhere_column.column = prewhere_column.type->createColumnConst(getNumRows(), UInt64(1));
+        prewhere_column.column = prewhere_column.type->createColumnConst(getNumRows(), 1u);
 
     /// If block is empty, create column in order to store rows number.
     if (last_reader_in_chain && result.block.columns() == 0)

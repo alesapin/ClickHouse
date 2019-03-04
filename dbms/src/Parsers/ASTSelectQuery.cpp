@@ -1,12 +1,10 @@
-#include <Common/FieldVisitors.h>
+#include <Common/typeid_cast.h>
 #include <Parsers/ASTSetQuery.h>
 #include <Parsers/ASTFunction.h>
 #include <Parsers/ASTAsterisk.h>
 #include <Parsers/ASTIdentifier.h>
 #include <Parsers/ASTSelectQuery.h>
-#include <Parsers/ASTSubquery.h>
 #include <Parsers/ASTTablesInSelectQuery.h>
-#include <Common/typeid_cast.h>
 
 
 namespace DB
@@ -105,6 +103,9 @@ void ASTSelectQuery::formatImpl(const FormatSettings & s, FormatState & state, F
 
     if (group_by_with_rollup)
         s.ostr << (s.hilite ? hilite_keyword : "") << s.nl_or_ws << indent_str << (s.one_line ? "" : "    ") << "WITH ROLLUP" << (s.hilite ? hilite_none : "");
+
+    if (group_by_with_cube)
+        s.ostr << (s.hilite ? hilite_keyword : "") << s.nl_or_ws << indent_str << (s.one_line ? "" : "    ") << "WITH CUBE" << (s.hilite ? hilite_none : "");
 
     if (group_by_with_totals)
         s.ostr << (s.hilite ? hilite_keyword : "") << s.nl_or_ws << indent_str << (s.one_line ? "" : "    ") << "WITH TOTALS" << (s.hilite ? hilite_none : "");
@@ -230,51 +231,12 @@ static const ASTTablesInSelectQueryElement * getFirstTableJoin(const ASTSelectQu
             if (!joined_table)
                 joined_table = &tables_element;
             else
-                throw Exception("Support for more than one JOIN in query is not implemented", ErrorCodes::NOT_IMPLEMENTED);
+                throw Exception("Multiple JOIN disabled or does not support the query. "
+                                "'set allow_experimental_multiple_joins_emulation' to enable.", ErrorCodes::NOT_IMPLEMENTED);
         }
     }
 
     return joined_table;
-}
-
-
-ASTPtr ASTSelectQuery::database() const
-{
-    const ASTTableExpression * table_expression = getFirstTableExpression(*this);
-    if (!table_expression || !table_expression->database_and_table_name || table_expression->database_and_table_name->children.empty())
-        return {};
-
-    if (table_expression->database_and_table_name->children.size() != 2)
-        throw Exception("Logical error: more than two components in table expression", ErrorCodes::LOGICAL_ERROR);
-
-    return table_expression->database_and_table_name->children[0];
-}
-
-
-ASTPtr ASTSelectQuery::table() const
-{
-    const ASTTableExpression * table_expression = getFirstTableExpression(*this);
-    if (!table_expression)
-        return {};
-
-    if (table_expression->database_and_table_name)
-    {
-        if (table_expression->database_and_table_name->children.empty())
-            return table_expression->database_and_table_name;
-
-        if (table_expression->database_and_table_name->children.size() != 2)
-            throw Exception("Logical error: more than two components in table expression", ErrorCodes::LOGICAL_ERROR);
-
-        return table_expression->database_and_table_name->children[1];
-    }
-
-    if (table_expression->table_function)
-        return table_expression->table_function;
-
-    if (table_expression->subquery)
-        return static_cast<const ASTSubquery *>(table_expression->subquery.get())->children.at(0);
-
-    throw Exception("Logical error: incorrect table expression", ErrorCodes::LOGICAL_ERROR);
 }
 
 
@@ -308,23 +270,21 @@ bool ASTSelectQuery::final() const
 }
 
 
-ASTPtr ASTSelectQuery::array_join_expression_list() const
+ASTPtr ASTSelectQuery::array_join_expression_list(bool & is_left) const
 {
     const ASTArrayJoin * array_join = getFirstArrayJoin(*this);
     if (!array_join)
         return {};
 
+    is_left = (array_join->kind == ASTArrayJoin::Kind::Left);
     return array_join->expression_list;
 }
 
 
-bool ASTSelectQuery::array_join_is_left() const
+ASTPtr ASTSelectQuery::array_join_expression_list() const
 {
-    const ASTArrayJoin * array_join = getFirstArrayJoin(*this);
-    if (!array_join)
-        return {};
-
-    return array_join->kind == ASTArrayJoin::Kind::Left;
+    bool is_left;
+    return array_join_expression_list(is_left);
 }
 
 
@@ -333,31 +293,17 @@ const ASTTablesInSelectQueryElement * ASTSelectQuery::join() const
     return getFirstTableJoin(*this);
 }
 
-
-void ASTSelectQuery::setDatabaseIfNeeded(const String & database_name)
+static String getTableExpressionAlias(const ASTTableExpression * table_expression)
 {
-    ASTTableExpression * table_expression = getFirstTableExpression(*this);
-    if (!table_expression)
-        return;
+    if (table_expression->subquery)
+        return table_expression->subquery->tryGetAlias();
+    else if (table_expression->table_function)
+        return table_expression->table_function->tryGetAlias();
+    else if (table_expression->database_and_table_name)
+        return table_expression->database_and_table_name->tryGetAlias();
 
-    if (!table_expression->database_and_table_name)
-        return;
-
-    if (table_expression->database_and_table_name->children.empty())
-    {
-        ASTPtr database = std::make_shared<ASTIdentifier>(database_name, ASTIdentifier::Database);
-        ASTPtr table = table_expression->database_and_table_name;
-
-        const String & old_name = static_cast<ASTIdentifier &>(*table_expression->database_and_table_name).name;
-        table_expression->database_and_table_name = std::make_shared<ASTIdentifier>(database_name + "." + old_name, ASTIdentifier::Table);
-        table_expression->database_and_table_name->children = {database, table};
-    }
-    else if (table_expression->database_and_table_name->children.size() != 2)
-    {
-        throw Exception("Logical error: more than two components in table expression", ErrorCodes::LOGICAL_ERROR);
-    }
+    return String();
 }
-
 
 void ASTSelectQuery::replaceDatabaseAndTable(const String & database_name, const String & table_name)
 {
@@ -376,19 +322,11 @@ void ASTSelectQuery::replaceDatabaseAndTable(const String & database_name, const
         table_expression = table_expr.get();
     }
 
-    ASTPtr table = std::make_shared<ASTIdentifier>(table_name, ASTIdentifier::Table);
+    String table_alias = getTableExpressionAlias(table_expression);
+    table_expression->database_and_table_name = createTableIdentifier(database_name, table_name);
 
-    if (!database_name.empty())
-    {
-        ASTPtr database = std::make_shared<ASTIdentifier>(database_name, ASTIdentifier::Database);
-
-        table_expression->database_and_table_name = std::make_shared<ASTIdentifier>(database_name + "." + table_name, ASTIdentifier::Table);
-        table_expression->database_and_table_name->children = {database, table};
-    }
-    else
-    {
-        table_expression->database_and_table_name = std::make_shared<ASTIdentifier>(table_name, ASTIdentifier::Table);
-    }
+    if (!table_alias.empty())
+        table_expression->database_and_table_name->setAlias(table_alias);
 }
 
 
@@ -409,8 +347,13 @@ void ASTSelectQuery::addTableFunction(ASTPtr & table_function_ptr)
         table_expression = table_expr.get();
     }
 
-    table_expression->table_function = table_function_ptr;
+    String table_alias = getTableExpressionAlias(table_expression);
+    /// Maybe need to modify the alias, so we should clone new table_function node
+    table_expression->table_function = table_function_ptr->clone();
     table_expression->database_and_table_name = nullptr;
+
+    if (table_alias.empty())
+        table_expression->table_function->setAlias(table_alias);
 }
 
 }

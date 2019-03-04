@@ -1,13 +1,13 @@
 #pragma once
 
-#include <DataTypes/IDataType.h>
+#include <DataTypes/DataTypeWithSimpleSerialization.h>
 
 
 namespace DB
 {
 
 
-class DataTypeArray final : public IDataType
+class DataTypeArray final : public DataTypeWithSimpleSerialization
 {
 private:
     /// The type of array elements.
@@ -20,7 +20,7 @@ public:
 
     TypeIndex getTypeId() const override { return TypeIndex::Array; }
 
-    std::string getName() const override
+    std::string doGetName() const override
     {
         return "Array(" + nested->getName() + ")";
     }
@@ -41,13 +41,7 @@ public:
     void deserializeBinary(IColumn & column, ReadBuffer & istr) const override;
 
     void serializeText(const IColumn & column, size_t row_num, WriteBuffer & ostr, const FormatSettings &) const override;
-    void deserializeText(IColumn & column, ReadBuffer & istr, const FormatSettings &) const;
-
-    void serializeTextEscaped(const IColumn & column, size_t row_num, WriteBuffer & ostr, const FormatSettings &) const override;
-    void deserializeTextEscaped(IColumn & column, ReadBuffer & istr, const FormatSettings &) const override;
-
-    void serializeTextQuoted(const IColumn & column, size_t row_num, WriteBuffer & ostr, const FormatSettings &) const override;
-    void deserializeTextQuoted(IColumn & column, ReadBuffer & istr, const FormatSettings &) const override;
+    void deserializeText(IColumn & column, ReadBuffer & istr, const FormatSettings &) const override;
 
     void serializeTextJSON(const IColumn & column, size_t row_num, WriteBuffer & ostr, const FormatSettings &) const override;
     void deserializeTextJSON(IColumn & column, ReadBuffer & istr, const FormatSettings &) const override;
@@ -89,6 +83,15 @@ public:
             size_t limit,
             DeserializeBinaryBulkSettings & settings,
             DeserializeBinaryBulkStatePtr & state) const override;
+
+    void serializeProtobuf(const IColumn & column,
+                           size_t row_num,
+                           ProtobufWriter & protobuf,
+                           size_t & value_index) const override;
+    void deserializeProtobuf(IColumn & column,
+                             ProtobufReader & protobuf,
+                             bool allow_add_row,
+                             bool & row_added) const override;
 
     MutableColumnPtr createColumn() const override;
 

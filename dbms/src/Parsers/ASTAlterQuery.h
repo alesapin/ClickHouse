@@ -1,7 +1,7 @@
 #pragma once
 
 #include <Parsers/IAST.h>
-#include <Parsers/ASTQueryWithOutput.h>
+#include <Parsers/ASTQueryWithTableAndOutput.h>
 #include <Parsers/ASTQueryWithOnCluster.h>
 
 
@@ -14,6 +14,7 @@ namespace DB
  *      DROP COLUMN col_drop [FROM PARTITION partition],
  *      MODIFY COLUMN col_name type,
  *      DROP PARTITION partition,
+ *      COMMENT_COLUMN col_name 'comment',
  */
 
 class ASTAlterCommand : public IAST
@@ -24,15 +25,21 @@ public:
         ADD_COLUMN,
         DROP_COLUMN,
         MODIFY_COLUMN,
-        MODIFY_PRIMARY_KEY,
+        COMMENT_COLUMN,
+        MODIFY_ORDER_BY,
+
+        ADD_INDEX,
+        DROP_INDEX,
 
         DROP_PARTITION,
         ATTACH_PARTITION,
         REPLACE_PARTITION,
         FETCH_PARTITION,
         FREEZE_PARTITION,
+        FREEZE_ALL,
 
         DELETE,
+        UPDATE,
 
         NO_TYPE,
     };
@@ -50,23 +57,42 @@ public:
      */
     ASTPtr column;
 
-    /** For MODIFY PRIMARY KEY
+    /** For MODIFY ORDER BY
      */
-    ASTPtr primary_key;
+    ASTPtr order_by;
+
+    /** The ADD INDEX query stores the IndexDeclaration there.
+     */
+    ASTPtr index_decl;
+
+    /** The ADD INDEX query stores the name of the index following AFTER.
+     *  The DROP INDEX query stores the name for deletion.
+     */
+     ASTPtr index;
 
     /** Used in DROP PARTITION and ATTACH PARTITION FROM queries.
      *  The value or ID of the partition is stored here.
      */
     ASTPtr partition;
 
-    /// For DELETE WHERE: the predicate that filters the rows to delete.
+    /// For DELETE/UPDATE WHERE: the predicate that filters the rows to delete/update.
     ASTPtr predicate;
+
+    /// A list of expressions of the form `column = expr` for the UPDATE command.
+    ASTPtr update_assignments;
+
+    /// A column comment
+    ASTPtr comment;
 
     bool detach = false;        /// true for DETACH PARTITION
 
     bool part = false;          /// true for ATTACH PART
 
     bool clear_column = false;  /// for CLEAR COLUMN (do not drop column from metadata)
+
+    bool if_not_exists = false;  /// option for ADD_COLUMN
+
+    bool if_exists = false;  /// option for DROP_COLUMN, MODIFY_COLUMN, COMMENT_COLUMN
 
     /** For FETCH PARTITION - the path in ZK to the shard, from which to download the partition.
      */
@@ -82,7 +108,7 @@ public:
     /// To distinguish REPLACE and ATTACH PARTITION partition FROM db.table
     bool replace = true;
 
-    String getID() const override { return "AlterCommand_" + std::to_string(static_cast<int>(type)); }
+    String getID(char delim) const override { return "AlterCommand" + (delim + std::to_string(static_cast<int>(type))); }
 
     ASTPtr clone() const override;
 
@@ -101,7 +127,7 @@ public:
         children.push_back(command);
     }
 
-    String getID() const override { return "AlterCommandList"; }
+    String getID(char) const override { return "AlterCommandList"; }
 
     ASTPtr clone() const override;
 
@@ -109,19 +135,19 @@ protected:
     void formatImpl(const FormatSettings & settings, FormatState & state, FormatStateStacked frame) const override;
 };
 
-class ASTAlterQuery : public ASTQueryWithOutput, public ASTQueryWithOnCluster
+class ASTAlterQuery : public ASTQueryWithTableAndOutput, public ASTQueryWithOnCluster
 {
 public:
-    String database;
-    String table;
-
     ASTAlterCommandList * command_list = nullptr;
 
-    String getID() const override;
+    String getID(char) const override;
 
     ASTPtr clone() const override;
 
-    ASTPtr getRewrittenASTWithoutOnCluster(const std::string & new_database) const override;
+    ASTPtr getRewrittenASTWithoutOnCluster(const std::string & new_database) const override
+    {
+        return removeOnCluster<ASTAlterQuery>(clone(), new_database);
+    }
 
 protected:
     void formatQueryImpl(const FormatSettings & settings, FormatState & state, FormatStateStacked frame) const override;

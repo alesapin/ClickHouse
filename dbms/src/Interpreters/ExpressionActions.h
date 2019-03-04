@@ -25,6 +25,9 @@ using NamesWithAliases = std::vector<NameWithAlias>;
 
 class Join;
 
+class IPreparedFunction;
+using PreparedFunctionPtr = std::shared_ptr<IPreparedFunction>;
+
 class IFunctionBase;
 using FunctionBasePtr = std::shared_ptr<IFunctionBase>;
 
@@ -75,22 +78,32 @@ public:
     std::string result_name;
     DataTypePtr result_type;
 
-    /// For conditional projections (projections on subset of rows)
-    std::string row_projection_column;
-    bool is_row_projection_complementary = false;
+    /// If COPY_COLUMN can replace the result column.
+    bool can_replace = false;
 
     /// For ADD_COLUMN.
     ColumnPtr added_column;
 
     /// For APPLY_FUNCTION and LEFT ARRAY JOIN.
+    /// FunctionBuilder is used before action was added to ExpressionActions (when we don't know types of arguments).
     FunctionBuilderPtr function_builder;
-    FunctionBasePtr function;
+
+    /// For unaligned [LEFT] ARRAY JOIN
+    FunctionBuilderPtr function_length;
+    FunctionBuilderPtr function_greatest;
+    FunctionBuilderPtr function_arrayResize;
+
+    /// Can be used after action was added to ExpressionActions if we want to get function signature or properties like monotonicity.
+    FunctionBasePtr function_base;
+    /// Prepared function which is used in function execution.
+    PreparedFunctionPtr function;
     Names argument_names;
     bool is_function_compiled = false;
 
     /// For ARRAY_JOIN
     NameSet array_joined_columns;
     bool array_join_is_left = false;
+    bool unaligned_array_join = false;
 
     /// For JOIN
     std::shared_ptr<const Join> join;
@@ -102,14 +115,11 @@ public:
 
     /// If result_name_ == "", as name "function_name(arguments separated by commas) is used".
     static ExpressionAction applyFunction(
-        const FunctionBuilderPtr & function_, const std::vector<std::string> & argument_names_, std::string result_name_ = "",
-        const std::string & row_projection_column = "");
+        const FunctionBuilderPtr & function_, const std::vector<std::string> & argument_names_, std::string result_name_ = "");
 
-    static ExpressionAction addColumn(const ColumnWithTypeAndName & added_column_,
-                                      const std::string & row_projection_column,
-                                      bool is_row_projection_complementary);
+    static ExpressionAction addColumn(const ColumnWithTypeAndName & added_column_);
     static ExpressionAction removeColumn(const std::string & removed_name);
-    static ExpressionAction copyColumn(const std::string & from_name, const std::string & to_name);
+    static ExpressionAction copyColumn(const std::string & from_name, const std::string & to_name, bool can_replace = false);
     static ExpressionAction project(const NamesWithAliases & projected_columns_);
     static ExpressionAction project(const Names & projected_columns_);
     static ExpressionAction addAliases(const NamesWithAliases & aliased_columns_);
@@ -126,15 +136,14 @@ public:
 
     struct ActionHash
     {
-        size_t operator()(const ExpressionAction & action) const;
+        UInt128 operator()(const ExpressionAction & action) const;
     };
 
 private:
     friend class ExpressionActions;
 
-    void prepare(Block & sample_block);
-    size_t getInputRowsCount(Block & block, std::unordered_map<std::string, size_t> & input_rows_counts) const;
-    void execute(Block & block, std::unordered_map<std::string, size_t> & input_rows_counts) const;
+    void prepare(Block & sample_block, const Settings & settings);
+    void execute(Block & block, bool dry_run) const;
     void executeOnTotals(Block & block) const;
 };
 
@@ -166,6 +175,9 @@ public:
             input_columns.emplace_back(input_elem.name, input_elem.type);
             sample_block.insert(input_elem);
         }
+#if USE_EMBEDDED_COMPILER
+        compilation_cache = context_.getCompiledExpressionCache();
+#endif
     }
 
     /// Add the input column.
@@ -212,7 +224,7 @@ public:
     const NamesAndTypesList & getRequiredColumnsWithTypes() const { return input_columns; }
 
     /// Execute the expression on the block. The block must contain all the columns returned by getRequiredColumns.
-    void execute(Block & block) const;
+    void execute(Block & block, bool dry_run = false) const;
 
     /** Execute the expression on the block of total values.
       * Almost the same as `execute`. The difference is only when JOIN is executed.
@@ -226,9 +238,23 @@ public:
 
     static std::string getSmallestColumn(const NamesAndTypesList & columns);
 
-    BlockInputStreamPtr createStreamWithNonJoinedDataIfFullOrRightJoin(const Block & source_header, size_t max_block_size) const;
+    BlockInputStreamPtr createStreamWithNonJoinedDataIfFullOrRightJoin(const Block & source_header, UInt64 max_block_size) const;
 
     const Settings & getSettings() const { return settings; }
+
+
+    struct ActionsHash
+    {
+        UInt128 operator()(const ExpressionActions::Actions & elems) const
+        {
+            SipHash hash;
+            for (const ExpressionAction & act : elems)
+                hash.update(ExpressionAction::ActionHash{}(act));
+            UInt128 result;
+            hash.get128(result.low, result.high);
+            return result;
+        }
+    };
 
 private:
     NamesAndTypesList input_columns;
@@ -248,18 +274,6 @@ private:
 };
 
 using ExpressionActionsPtr = std::shared_ptr<ExpressionActions>;
-
-struct ActionsHash
-{
-    size_t operator()(const ExpressionActions::Actions & actions) const
-    {
-        SipHash hash;
-        for (const ExpressionAction & act : actions)
-            hash.update(ExpressionAction::ActionHash{}(act));
-        return hash.get64();
-    }
-};
-
 
 
 /** The sequence of transformations over the block.

@@ -5,15 +5,17 @@
 #include <DataTypes/DataTypeArray.h>
 #include <DataTypes/DataTypeNullable.h>
 #include <DataTypes/DataTypesNumber.h>
+#include <DataTypes/DataTypeLowCardinality.h>
+
 #include <IO/WriteBuffer.h>
 #include <IO/WriteHelpers.h>
+
 #include <Interpreters/Context.h>
 
 #include <Common/StringUtils/StringUtils.h>
 #include <Common/typeid_cast.h>
 
 #include <Poco/String.h>
-#include <DataTypes/DataTypeWithDictionary.h>
 
 
 namespace DB
@@ -42,14 +44,14 @@ void AggregateFunctionFactory::registerFunction(const String & name, Creator cre
             ErrorCodes::LOGICAL_ERROR);
 }
 
-static DataTypes convertTypesWithDictionaryToNested(const DataTypes & types)
+static DataTypes convertLowCardinalityTypesToNested(const DataTypes & types)
 {
     DataTypes res_types;
     res_types.reserve(types.size());
     for (const auto & type : types)
     {
-        if (auto * type_with_dict = typeid_cast<const DataTypeWithDictionary *>(type.get()))
-            res_types.push_back(type_with_dict->getDictionaryType());
+        if (auto * low_cardinality_type = typeid_cast<const DataTypeLowCardinality *>(type.get()))
+            res_types.push_back(low_cardinality_type->getDictionaryType());
         else
             res_types.push_back(type);
     }
@@ -63,7 +65,7 @@ AggregateFunctionPtr AggregateFunctionFactory::get(
     const Array & parameters,
     int recursion_level) const
 {
-    auto type_without_dictionary = convertTypesWithDictionaryToNested(argument_types);
+    auto type_without_low_cardinality = convertLowCardinalityTypesToNested(argument_types);
 
     /// If one of types is Nullable, we apply aggregate function combinator "Null".
 
@@ -74,7 +76,7 @@ AggregateFunctionPtr AggregateFunctionFactory::get(
         if (!combinator)
             throw Exception("Logical error: cannot find aggregate function combinator to apply a function to Nullable arguments.", ErrorCodes::LOGICAL_ERROR);
 
-        DataTypes nested_types = combinator->transformArguments(type_without_dictionary);
+        DataTypes nested_types = combinator->transformArguments(type_without_low_cardinality);
 
         AggregateFunctionPtr nested_function;
 
@@ -87,7 +89,7 @@ AggregateFunctionPtr AggregateFunctionFactory::get(
         return combinator->transformAggregateFunction(nested_function, argument_types, parameters);
     }
 
-    auto res = getImpl(name, type_without_dictionary, parameters, recursion_level);
+    auto res = getImpl(name, type_without_low_cardinality, parameters, recursion_level);
     if (!res)
         throw Exception("Logical error: AggregateFunctionFactory returned nullptr", ErrorCodes::LOGICAL_ERROR);
     return res;
@@ -102,16 +104,14 @@ AggregateFunctionPtr AggregateFunctionFactory::getImpl(
 {
     String name = getAliasToOrName(name_param);
     /// Find by exact match.
-    auto it = aggregate_functions.find(name);
-    if (it != aggregate_functions.end())
+    if (auto it = aggregate_functions.find(name); it != aggregate_functions.end())
         return it->second(name, argument_types, parameters);
 
     /// Find by case-insensitive name.
     /// Combinators cannot apply for case insensitive (SQL-style) aggregate function names. Only for native names.
     if (recursion_level == 0)
     {
-        auto it = case_insensitive_aggregate_functions.find(Poco::toLower(name));
-        if (it != case_insensitive_aggregate_functions.end())
+        if (auto it = case_insensitive_aggregate_functions.find(Poco::toLower(name)); it != case_insensitive_aggregate_functions.end())
             return it->second(name, argument_types, parameters);
     }
 
@@ -126,11 +126,15 @@ AggregateFunctionPtr AggregateFunctionFactory::getImpl(
 
         String nested_name = name.substr(0, name.size() - combinator->getName().size());
         DataTypes nested_types = combinator->transformArguments(argument_types);
-        AggregateFunctionPtr nested_function = getImpl(nested_name, nested_types, parameters, recursion_level + 1);
+        AggregateFunctionPtr nested_function = get(nested_name, nested_types, parameters, recursion_level + 1);
         return combinator->transformAggregateFunction(nested_function, argument_types, parameters);
     }
 
-    throw Exception("Unknown aggregate function " + name, ErrorCodes::UNKNOWN_AGGREGATE_FUNCTION);
+    auto hints = this->getHints(name);
+    if (!hints.empty())
+        throw Exception("Unknown aggregate function " + name + ". Maybe you meant: " + toString(hints), ErrorCodes::UNKNOWN_AGGREGATE_FUNCTION);
+    else
+        throw Exception("Unknown aggregate function " + name, ErrorCodes::UNKNOWN_AGGREGATE_FUNCTION);
 }
 
 

@@ -8,7 +8,7 @@
 namespace DB
 {
 
-class IAST;
+class IAST; // XXX: should include full class - for proper use inside inline methods
 using ASTPtr = std::shared_ptr<IAST>;
 
 
@@ -26,19 +26,20 @@ public:
     bool supportsPrewhere() const override { return getTargetTable()->supportsPrewhere(); }
     bool supportsFinal() const override { return getTargetTable()->supportsFinal(); }
     bool supportsIndexForIn() const override { return getTargetTable()->supportsIndexForIn(); }
-    bool mayBenefitFromIndexForIn(const ASTPtr & left_in_operand) const override { return getTargetTable()->mayBenefitFromIndexForIn(left_in_operand); }
+    bool mayBenefitFromIndexForIn(const ASTPtr & left_in_operand, const Context & query_context) const override
+    {
+        return getTargetTable()->mayBenefitFromIndexForIn(left_in_operand, query_context);
+    }
 
-    BlockOutputStreamPtr write(const ASTPtr & query, const Settings & settings) override;
+    BlockOutputStreamPtr write(const ASTPtr & query, const Context & context) override;
     void drop() override;
 
-    void truncate(const ASTPtr &) override;
+    void truncate(const ASTPtr &, const Context &) override;
 
     bool optimize(const ASTPtr & query, const ASTPtr & partition, bool final, bool deduplicate, const Context & context) override;
 
-    void dropPartition(const ASTPtr & query, const ASTPtr & partition, bool detach, const Context & context) override;
-    void clearColumnInPartition(const ASTPtr & partition, const Field & column_name, const Context & context) override;
-    void attachPartition(const ASTPtr & partition, bool part, const Context & context) override;
-    void freezePartition(const ASTPtr & partition, const String & with_name, const Context & context) override;
+    void alterPartition(const ASTPtr & query, const PartitionCommands & commands, const Context & context) override;
+
     void mutate(const MutationCommands & commands, const Context & context) override;
 
     void shutdown() override;
@@ -47,6 +48,9 @@ public:
     void checkPartitionCanBeDropped(const ASTPtr & partition) override;
 
     QueryProcessingStage::Enum getQueryProcessingStage(const Context & context) const override;
+
+    StoragePtr getTargetTable() const;
+    StoragePtr tryGetTargetTable() const;
 
     BlockInputStreams read(
         const Names & column_names,
@@ -68,9 +72,6 @@ private:
     ASTPtr inner_query;
     Context & global_context;
     bool has_inner_table = false;
-
-    StoragePtr getTargetTable() const;
-    StoragePtr tryGetTargetTable() const;
 
     void checkStatementCanBeForwarded() const;
 

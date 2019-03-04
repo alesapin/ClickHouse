@@ -1,6 +1,4 @@
-<a name="internal_dicts"></a>
-
-# Internal dictionaries
+# Internal dictionaries {#internal_dicts}
 
 ClickHouse contains a built-in feature for working with a geobase.
 
@@ -17,7 +15,6 @@ The internal dictionaries are disabled in the default package.
 To enable them, uncomment the parameters `path_to_regions_hierarchy_file` and `path_to_regions_names_files` in the server configuration file.
 
 The geobase is loaded from text files.
-If you work at Yandex, you can create them by following [the instructions](https://github.yandex-team.ru/raw/Metrika/ClickHouse_private/master/doc/create_embedded_geobase_dictionaries.txt).
 
 Place the `regions_hierarchy*.txt` files into the `path_to_regions_hierarchy_file` directory. This configuration parameter must contain the path to the `regions_hierarchy.txt` file (the default regional hierarchy), and the other files (`regions_hierarchy_ua.txt`) must be located in the same directory.
 
@@ -47,3 +44,5 @@ Dictionary updates (other than loading at first use) do not block queries. Durin
 We recommend periodically updating the dictionaries with the geobase. During an update, generate new files and write them to a separate location. When everything is ready, rename them to the files used by the server.
 
 There are also functions for working with OS identifiers and Yandex.Metrica search engines, but they shouldn't be used.
+
+[Original article](https://clickhouse.yandex/docs/en/query_language/dicts/internal_dicts/) <!--hide-->

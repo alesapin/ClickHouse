@@ -16,11 +16,12 @@
 #include <DataStreams/IBlockOutputStream.h>
 #include <DataStreams/BlockStreamProfileInfo.h>
 
-#include <IO/CompressionSettings.h>
 #include <IO/ConnectionTimeouts.h>
 
 #include <Interpreters/Settings.h>
 #include <Interpreters/TablesStatus.h>
+
+#include <Compression/ICompressionCodec.h>
 
 #include <atomic>
 #include <optional>
@@ -96,6 +97,7 @@ public:
 
         Block block;
         std::unique_ptr<Exception> exception;
+        std::vector<String> multistring_message;
         Progress progress;
         BlockStreamProfileInfo profile_info;
 
@@ -106,6 +108,7 @@ public:
     void setDefaultDatabase(const String & database);
 
     void getServerVersion(String & name, UInt64 & version_major, UInt64 & version_minor, UInt64 & version_patch, UInt64 & revision);
+    UInt64 getServerRevision();
 
     const String & getServerTimezone();
     const String & getServerDisplayName();
@@ -115,6 +118,12 @@ public:
     const String & getHost() const;
     UInt16 getPort() const;
     const String & getDefaultDatabase() const;
+
+    /// For proper polling.
+    inline const auto & getTimeouts() const
+    {
+        return timeouts;
+    }
 
     /// If last flag is true, you need to call sendExternalTablesData after.
     void sendQuery(
@@ -157,11 +166,6 @@ public:
       *  (when someone continues to wait for something) after an exception.
       */
     void disconnect();
-
-    /** Fill in the information that is needed when getting the block for some tasks
-      * (so far only for a DESCRIBE TABLE query with Distributed tables).
-      */
-    void fillBlockExtraInfo(BlockExtraInfo & info) const;
 
     size_t outBytesCount() const { return out ? out->count() : 0; }
     size_t inBytesCount() const { return in ? in->count() : 0; }
@@ -206,7 +210,7 @@ private:
     Protocol::Secure secure;             /// Enable data encryption for communication.
 
     /// What compression settings to use while sending data for INSERT queries and external tables.
-    CompressionSettings compression_settings;
+    CompressionCodecPtr compression_codec;
 
     /** If not nullptr, used to limit network traffic.
       * Only traffic for transferring blocks is accounted. Other packets don't.
@@ -258,6 +262,7 @@ private:
     Block receiveLogData();
     Block receiveDataImpl(BlockInputStreamPtr & stream);
 
+    std::vector<String> receiveMultistringMessage(UInt64 msg_type);
     std::unique_ptr<Exception> receiveException();
     Progress receiveProgress();
     BlockStreamProfileInfo receiveProfileInfo();

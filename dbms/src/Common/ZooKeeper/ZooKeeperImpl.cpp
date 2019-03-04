@@ -14,6 +14,11 @@
 #include <array>
 
 
+/// ZooKeeper has 1 MB node size and serialization limit by default,
+/// but it can be raised up, so we have a slightly larger limit on our side.
+#define MAX_STRING_OR_ARRAY_SIZE (1 << 28)  /// 256 MiB
+
+
 namespace ProfileEvents
 {
     extern const Event ZooKeeperInit;
@@ -322,7 +327,6 @@ void read(bool & x, ReadBuffer & in)
 
 void read(String & s, ReadBuffer & in)
 {
-    static constexpr int32_t max_string_size = 1 << 20;
     int32_t size = 0;
     read(size, in);
 
@@ -336,7 +340,7 @@ void read(String & s, ReadBuffer & in)
     if (size < 0)
         throw Exception("Negative size while reading string from ZooKeeper", ZMARSHALLINGERROR);
 
-    if (size > max_string_size)
+    if (size > MAX_STRING_OR_ARRAY_SIZE)
         throw Exception("Too large string size while reading from ZooKeeper", ZMARSHALLINGERROR);
 
     s.resize(size);
@@ -369,12 +373,11 @@ void read(Stat & stat, ReadBuffer & in)
 
 template <typename T> void read(std::vector<T> & arr, ReadBuffer & in)
 {
-    static constexpr int32_t max_array_size = 1 << 20;
     int32_t size = 0;
     read(size, in);
     if (size < 0)
         throw Exception("Negative size while reading array from ZooKeeper", ZMARSHALLINGERROR);
-    if (size > max_array_size)
+    if (size > MAX_STRING_OR_ARRAY_SIZE)
         throw Exception("Too large array size while reading from ZooKeeper", ZMARSHALLINGERROR);
     arr.resize(size);
     for (auto & elem : arr)
@@ -395,38 +398,17 @@ void ZooKeeper::read(T & x)
 }
 
 
-struct ZooKeeperResponse;
-using ZooKeeperResponsePtr = std::shared_ptr<ZooKeeperResponse>;
-
-
-struct ZooKeeperRequest : virtual Request
+void ZooKeeperRequest::write(WriteBuffer & out) const
 {
-    ZooKeeper::XID xid = 0;
-    bool has_watch = false;
-    /// If the request was not send and the error happens, we definitely sure, that is has not been processed by the server.
-    /// If the request was sent and we didn't get the response and the error happens, then we cannot be sure was it processed or not.
-    bool probably_sent = false;
+    /// Excessive copy to calculate length.
+    WriteBufferFromOwnString buf;
+    Coordination::write(xid, buf);
+    Coordination::write(getOpNum(), buf);
+    writeImpl(buf);
+    Coordination::write(buf.str(), out);
+    out.next();
+}
 
-    virtual ~ZooKeeperRequest() {}
-
-    virtual ZooKeeper::OpNum getOpNum() const = 0;
-
-    /// Writes length, xid, op_num, then the rest.
-    void write(WriteBuffer & out) const
-    {
-        /// Excessive copy to calculate length.
-        WriteBufferFromOwnString buf;
-        Coordination::write(xid, buf);
-        Coordination::write(getOpNum(), buf);
-        writeImpl(buf);
-        Coordination::write(buf.str(), out);
-        out.next();
-    }
-
-    virtual void writeImpl(WriteBuffer &) const = 0;
-
-    virtual ZooKeeperResponsePtr makeResponse() const = 0;
-};
 
 struct ZooKeeperResponse : virtual Response
 {
@@ -874,8 +856,8 @@ ZooKeeper::ZooKeeper(
     if (!auth_scheme.empty())
         sendAuth(auth_scheme, auth_data);
 
-    send_thread = std::thread([this] { sendThread(); });
-    receive_thread = std::thread([this] { receiveThread(); });
+    send_thread = ThreadFromGlobalPool([this] { sendThread(); });
+    receive_thread = ThreadFromGlobalPool([this] { receiveThread(); });
 
     ProfileEvents::increment(ProfileEvents::ZooKeeperInit);
 }
@@ -908,19 +890,32 @@ void ZooKeeper::connect(
                 in.emplace(socket);
                 out.emplace(socket);
 
-                sendHandshake();
-                receiveHandshake();
+                try
+                {
+                    sendHandshake();
+                }
+                catch (DB::Exception & e)
+                {
+                    e.addMessage("while sending handshake to ZooKeeper");
+                    throw;
+                }
+
+                try
+                {
+                    receiveHandshake();
+                }
+                catch (DB::Exception & e)
+                {
+                    e.addMessage("while receiving handshake from ZooKeeper");
+                    throw;
+                }
 
                 connected = true;
                 break;
             }
-            catch (const Poco::Net::NetException &)
+            catch (...)
             {
                 fail_reasons << "\n" << getCurrentExceptionMessage(false) << ", " << address.toString();
-            }
-            catch (const Poco::TimeoutException &)
-            {
-                fail_reasons << "\n" << getCurrentExceptionMessage(false);
             }
         }
 
@@ -1014,7 +1009,7 @@ void ZooKeeper::sendAuth(const String & scheme, const String & data)
     read(err);
 
     if (read_xid != auth_xid)
-        throw Exception("Unexpected event recieved in reply to auth request: " + toString(read_xid),
+        throw Exception("Unexpected event received in reply to auth request: " + toString(read_xid),
             ZMARSHALLINGERROR);
 
     int32_t actual_length = in->count() - count_before_event;
@@ -1047,8 +1042,8 @@ void ZooKeeper::sendThread()
             {
                 /// Wait for the next request in queue. No more than operation timeout. No more than until next heartbeat time.
                 UInt64 max_wait = std::min(
-                    std::chrono::duration_cast<std::chrono::milliseconds>(next_heartbeat_time - now).count(),
-                    operation_timeout.totalMilliseconds());
+                    UInt64(std::chrono::duration_cast<std::chrono::milliseconds>(next_heartbeat_time - now).count()),
+                    UInt64(operation_timeout.totalMilliseconds()));
 
                 RequestInfo info;
                 if (requests_queue.tryPop(info, max_wait))
@@ -1189,9 +1184,9 @@ void ZooKeeper::receiveEvent()
         ProfileEvents::increment(ProfileEvents::ZooKeeperWatchResponse);
         response = std::make_shared<ZooKeeperWatchResponse>();
 
-        request_info.callback = [this](const Response & response)
+        request_info.callback = [this](const Response & response_)
         {
-            const WatchResponse & watch_response = dynamic_cast<const WatchResponse &>(response);
+            const WatchResponse & watch_response = dynamic_cast<const WatchResponse &>(response_);
 
             std::lock_guard lock(watches_mutex);
 

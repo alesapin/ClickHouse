@@ -1,26 +1,27 @@
+#include "HTTPHandler.h"
+
 #include <chrono>
 #include <iomanip>
-
 #include <Poco/File.h>
 #include <Poco/Net/HTTPBasicCredentials.h>
 #include <Poco/Net/HTTPServerRequest.h>
+#include <Poco/Net/HTTPServerRequestImpl.h>
 #include <Poco/Net/HTTPServerResponse.h>
 #include <Poco/Net/NetException.h>
-
 #include <ext/scope_guard.h>
-
 #include <Core/ExternalTable.h>
 #include <Common/StringUtils/StringUtils.h>
 #include <Common/escapeForFileName.h>
 #include <Common/getFQDNOrHostName.h>
 #include <Common/CurrentThread.h>
 #include <Common/setThreadName.h>
+#include <Common/config.h>
+#include <Compression/CompressedReadBuffer.h>
+#include <Compression/CompressedWriteBuffer.h>
 #include <IO/ReadBufferFromIStream.h>
 #include <IO/ZlibInflatingReadBuffer.h>
+#include <IO/BrotliReadBuffer.h>
 #include <IO/ReadBufferFromString.h>
-#include <IO/ConcatReadBuffer.h>
-#include <IO/CompressedReadBuffer.h>
-#include <IO/CompressedWriteBuffer.h>
 #include <IO/WriteBufferFromString.h>
 #include <IO/WriteBufferFromHTTPServerResponse.h>
 #include <IO/WriteBufferFromFile.h>
@@ -30,16 +31,11 @@
 #include <IO/CascadeWriteBuffer.h>
 #include <IO/MemoryReadWriteBuffer.h>
 #include <IO/WriteBufferFromTemporaryFile.h>
-
-#include <DataStreams/IProfilingBlockInputStream.h>
-
+#include <DataStreams/IBlockInputStream.h>
 #include <Interpreters/executeQuery.h>
 #include <Interpreters/Quota.h>
 #include <Common/typeid_cast.h>
-
 #include <Poco/Net/HTTPStream.h>
-
-#include "HTTPHandler.h"
 
 namespace DB
 {
@@ -62,6 +58,8 @@ namespace ErrorCodes
     extern const int TOO_DEEP_AST;
     extern const int TOO_BIG_AST;
     extern const int UNEXPECTED_AST_STRUCTURE;
+
+    extern const int SYNTAX_ERROR;
 
     extern const int UNKNOWN_TABLE;
     extern const int UNKNOWN_FUNCTION;
@@ -108,6 +106,8 @@ static Poco::Net::HTTPResponse::HTTPStatus exceptionCodeToHTTPStatus(int excepti
              exception_code == ErrorCodes::TOO_DEEP_AST ||
              exception_code == ErrorCodes::TOO_BIG_AST ||
              exception_code == ErrorCodes::UNEXPECTED_AST_STRUCTURE)
+        return HTTPResponse::HTTP_BAD_REQUEST;
+    else if (exception_code == ErrorCodes::SYNTAX_ERROR)
         return HTTPResponse::HTTP_BAD_REQUEST;
     else if (exception_code == ErrorCodes::UNKNOWN_TABLE ||
              exception_code == ErrorCodes::UNKNOWN_FUNCTION ||
@@ -213,9 +213,7 @@ void HTTPHandler::processQuery(
     Context context = server.context();
     context.setGlobalContext(server.context());
 
-    /// It will forcibly detach query even if unexpected error ocurred and detachQuery() was not called
-    /// Normal detaching is happen in BlockIO callbacks
-    CurrentThread::QueryScope query_scope_holder(context);
+    CurrentThread::QueryScope query_scope(context);
 
     LOG_TRACE(log, "Request URI: " << request.getURI());
 
@@ -268,7 +266,6 @@ void HTTPHandler::processQuery(
     std::string query_id = params.get("query_id", "");
     context.setUser(user, password, request.clientAddress(), quota_key);
     context.setCurrentQueryId(query_id);
-    CurrentThread::attachQueryContext(context);
 
     /// The user could specify session identifier and session timeout.
     /// It allows to modify settings, create temporary tables and reuse them in subsequent requests.
@@ -395,19 +392,25 @@ void HTTPHandler::processQuery(
     String http_request_compression_method_str = request.get("Content-Encoding", "");
     if (!http_request_compression_method_str.empty())
     {
-        ZlibCompressionMethod method;
         if (http_request_compression_method_str == "gzip")
         {
-            method = ZlibCompressionMethod::Gzip;
+            in_post = std::make_unique<ZlibInflatingReadBuffer>(*in_post_raw, ZlibCompressionMethod::Gzip);
         }
         else if (http_request_compression_method_str == "deflate")
         {
-            method = ZlibCompressionMethod::Zlib;
+            in_post = std::make_unique<ZlibInflatingReadBuffer>(*in_post_raw, ZlibCompressionMethod::Zlib);
         }
+#if USE_BROTLI
+        else if (http_request_compression_method_str == "br")
+        {
+            in_post = std::make_unique<BrotliReadBuffer>(*in_post_raw);
+        }
+#endif
         else
+        {
             throw Exception("Unknown Content-Encoding of HTTP request: " + http_request_compression_method_str,
-                ErrorCodes::UNKNOWN_COMPRESSION_METHOD);
-        in_post = std::make_unique<ZlibInflatingReadBuffer>(*in_post_raw, method);
+                    ErrorCodes::UNKNOWN_COMPRESSION_METHOD);
+        }
     }
     else
         in_post = std::move(in_post_raw);
@@ -557,12 +560,51 @@ void HTTPHandler::processQuery(
     client_info.http_method = http_method;
     client_info.http_user_agent = request.get("User-Agent", "");
 
+    auto appendCallback = [&context] (ProgressCallback callback)
+    {
+        auto prev = context.getProgressCallback();
+
+        context.setProgressCallback([prev, callback] (const Progress & progress)
+        {
+            if (prev)
+                prev(progress);
+
+            callback(progress);
+        });
+    };
+
     /// While still no data has been sent, we will report about query execution progress by sending HTTP headers.
     if (settings.send_progress_in_http_headers)
-        context.setProgressCallback([&used_output] (const Progress & progress) { used_output.out->onProgress(progress); });
+        appendCallback([&used_output] (const Progress & progress) { used_output.out->onProgress(progress); });
+
+    if (settings.readonly > 0 && settings.cancel_http_readonly_queries_on_client_close)
+    {
+        Poco::Net::StreamSocket & socket = dynamic_cast<Poco::Net::HTTPServerRequestImpl &>(request).socket();
+
+        appendCallback([&context, &socket](const Progress &)
+        {
+            /// Assume that at the point this method is called no one is reading data from the socket any more.
+            /// True for read-only queries.
+            try
+            {
+                char b;
+                int status = socket.receiveBytes(&b, 1, MSG_DONTWAIT | MSG_PEEK);
+                if (status == 0)
+                    context.killCurrentQuery();
+            }
+            catch (Poco::TimeoutException &)
+            {
+            }
+            catch (...)
+            {
+                context.killCurrentQuery();
+            }
+        });
+    }
 
     executeQuery(*in, *used_output.out_maybe_delayed_and_compressed, /* allow_into_outfile = */ false, context,
-        [&response] (const String & content_type) { response.setContentType(content_type); });
+        [&response] (const String & content_type) { response.setContentType(content_type); },
+        [&response] (const String & current_query_id) { response.add("Query-Id", current_query_id); });
 
     if (used_output.hasDelayed())
     {
@@ -646,6 +688,7 @@ void HTTPHandler::trySendExceptionToClient(const std::string & s, int exception_
 void HTTPHandler::handleRequest(Poco::Net::HTTPServerRequest & request, Poco::Net::HTTPServerResponse & response)
 {
     setThreadName("HTTPHandler");
+    ThreadStatus thread_status;
 
     Output used_output;
 

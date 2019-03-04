@@ -1,5 +1,3 @@
-<a name="ym_dict_functions"></a>
-
 # Functions for working with Yandex.Metrica dictionaries
 
 In order for the functions below to work, the server config must specify the paths and addresses for getting all the Yandex.Metrica dictionaries. The dictionaries are loaded at the first call of any of these functions. If the reference lists can't be loaded, an exception is thrown.
@@ -22,10 +20,10 @@ All the dictionaries are re-loaded in runtime (once every certain number of seco
 All functions for working with regions have an optional argument at the end – the dictionary key. It is referred to as the geobase.
 Example:
 
-```text
-regionToCountry (RegionID) — Uses the default dictionary: /opt/geo/regions_hierarchy.txt.
-regionToCountry (RegionID, '') — Uses the default dictionary: /opt/geo/regions_hierarchy.txt.
-regionToCountry (RegionID, 'ua') — Uses the dictionary for the ua key: /opt/geo/regions_hierarchy_ua.txt.
+```
+regionToCountry(RegionID) – Uses the default dictionary: /opt/geo/regions_hierarchy.txt
+regionToCountry(RegionID, '') – Uses the default dictionary: /opt/geo/regions_hierarchy.txt
+regionToCountry(RegionID, 'ua') – Uses the dictionary for the 'ua' key: /opt/geo/regions_hierarchy_ua.txt
 ```
 
 ### regionToCity(id[, geobase])
@@ -36,29 +34,29 @@ Accepts a UInt32 number – the region ID from the Yandex geobase. If this regio
 
 Converts a region to an area (type 5 in the geobase). In every other way, this function is the same as 'regionToCity'.
 
-```sql
+``` sql
 SELECT DISTINCT regionToName(regionToArea(toUInt32(number), 'ua'))
 FROM system.numbers
 LIMIT 15
 ```
 
-```text
+```
 ┌─regionToName(regionToArea(toUInt32(number), \'ua\'))─┐
 │                                                      │
-│ Moscow and Moscow region                          │
-│ St. Petersburg and Leningrad region              │
-│ Belogorod region                                 │
-│ Ivanovo region                                   │
-│ Kaluga region                                    │
-│ Kostroma region                                  │
-│ Kursk region                                      │
-│ Lipetsk region                                     │
-│ Oryol region                                    │
-│ Ryazan region                                    │
-│ Smolensk region                                   │
-│ Tambov region                                   │
-│ Tver region                                     │
-│ Tula region                                     │
+│ Moscow and Moscow region                             │
+│ St. Petersburg and Leningrad region                  │
+│ Belgorod region                                      │
+│ Ivanovsk region                                      │
+│ Kaluga region                                        │
+│ Kostroma region                                      │
+│ Kursk region                                         │
+│ Lipetsk region                                       │
+│ Orlov region                                         │
+│ Ryazan region                                        │
+│ Smolensk region                                      │
+│ Tambov region                                        │
+│ Tver region                                          │
+│ Tula region                                          │
 └──────────────────────────────────────────────────────┘
 ```
 
@@ -66,29 +64,29 @@ LIMIT 15
 
 Converts a region to a federal district (type 4 in the geobase). In every other way, this function is the same as 'regionToCity'.
 
-```sql
+``` sql
 SELECT DISTINCT regionToName(regionToDistrict(toUInt32(number), 'ua'))
 FROM system.numbers
 LIMIT 15
 ```
 
-```text
+```
 ┌─regionToName(regionToDistrict(toUInt32(number), \'ua\'))─┐
 │                                                          │
-│ Central Federal District                            │
-│ Northwest Federal District                        │
-│ Southern Federal District                                  │
-│ North Caucasian Federal District                      │
-│ Privolzhsky Federal District                            │
-│ Ural Federal District                              │
-│ Siberian Federal District                             │
-│ Far East Federal District                        │
-│ Scotland                                                │
-│ Faroe Islands                                        │
-│ Flemish region                                       │
-│ Brussels capital region                            │
-│ Walloon                                                 │
-│ Federation of Bosnia and Herzegovina                          │
+│ Central federal district                                 │
+│ Northwest federal district                               │
+│ South federal district                                   │
+│ North Caucases federal district                          │
+│ Privolga federal district                                │
+│ Ural federal district                                    │
+│ Siberian federal district                                │
+│ Far East federal district                                │
+│ Scotland                                                 │
+│ Faroe Islands                                            │
+│ Flemish region                                           │
+│ Brussels capital region                                  │
+│ Wallonia                                                 │
+│ Federation of Bosnia and Herzegovina                     │
 └──────────────────────────────────────────────────────────┘
 ```
 
@@ -125,3 +123,5 @@ Accepts a UInt32 number – the region ID from the Yandex geobase. A string with
 
 `ua` and `uk` both mean Ukrainian.
 
+
+[Original article](https://clickhouse.yandex/docs/en/query_language/functions/ym_dict_functions/) <!--hide-->

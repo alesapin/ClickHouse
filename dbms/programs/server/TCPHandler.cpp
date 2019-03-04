@@ -6,17 +6,16 @@
 #include <Common/ClickHouseRevision.h>
 #include <Common/CurrentThread.h>
 #include <Common/Stopwatch.h>
-#include <Common/ClickHouseRevision.h>
-#include <Common/Stopwatch.h>
 #include <Common/NetException.h>
 #include <Common/setThreadName.h>
 #include <Common/config_version.h>
 #include <IO/Progress.h>
-#include <IO/CompressedReadBuffer.h>
-#include <IO/CompressedWriteBuffer.h>
+#include <Compression/CompressedReadBuffer.h>
+#include <Compression/CompressedWriteBuffer.h>
 #include <IO/ReadBufferFromPocoSocket.h>
 #include <IO/WriteBufferFromPocoSocket.h>
-#include <IO/CompressionSettings.h>
+#include <IO/ReadHelpers.h>
+#include <IO/WriteHelpers.h>
 #include <IO/copyData.h>
 #include <DataStreams/AsynchronousBlockInputStream.h>
 #include <DataStreams/NativeBlockInputStream.h>
@@ -28,6 +27,9 @@
 #include <Storages/StorageMemory.h>
 #include <Storages/StorageReplicatedMergeTree.h>
 #include <Core/ExternalTable.h>
+#include <Storages/ColumnDefault.h>
+#include <DataTypes/DataTypeLowCardinality.h>
+#include <Compression/CompressionFactory.h>
 
 #include "TCPHandler.h"
 
@@ -51,6 +53,7 @@ namespace ErrorCodes
 void TCPHandler::runImpl()
 {
     setThreadName("TCPHandler");
+    ThreadStatus thread_status;
 
     connection_context = server.context();
     connection_context.setSessionContext(connection_context);
@@ -119,6 +122,9 @@ void TCPHandler::runImpl()
 
     while (1)
     {
+        /// Restore context of request.
+        query_context = connection_context;
+
         /// We are waiting for a packet from the client. Thus, every `POLL_INTERVAL` seconds check whether we need to shut down.
         while (!static_cast<ReadBufferFromPocoSocket &>(*in).poll(global_settings.poll_interval * 1000000) && !server.isCancelled())
             ;
@@ -130,6 +136,9 @@ void TCPHandler::runImpl()
         Stopwatch watch;
         state.reset();
 
+        /// Initialized later.
+        std::optional<CurrentThread::QueryScope> query_scope;
+
         /** An exception during the execution of request (it must be sent over the network to the client).
          *  The client will be able to accept it, if it did not happen while sending another packet and the client has not disconnected yet.
          */
@@ -140,9 +149,6 @@ void TCPHandler::runImpl()
 
         try
         {
-            /// Restore context of request.
-            query_context = connection_context;
-
             /// If a user passed query-local timeouts, reset socket to initial state at the end of the query
             SCOPE_EXIT({state.timeout_setter.reset();});
 
@@ -152,16 +158,16 @@ void TCPHandler::runImpl()
             if (!receivePacket())
                 continue;
 
-            CurrentThread::initializeQuery();
+            query_scope.emplace(query_context);
 
             send_exception_with_stack_trace = query_context.getSettingsRef().calculate_text_stack_trace;
 
             /// Should we send internal logs to client?
             if (client_revision >= DBMS_MIN_REVISION_WITH_SERVER_LOGS
-                && query_context.getSettingsRef().send_logs_level.value != "none")
+                && query_context.getSettingsRef().send_logs_level.value != LogsLevel::none)
             {
                 state.logs_queue = std::make_shared<InternalTextLogsQueue>();
-                state.logs_queue->max_priority = Poco::Logger::parseLevel(query_context.getSettingsRef().send_logs_level.value);
+                state.logs_queue->max_priority = Poco::Logger::parseLevel(query_context.getSettingsRef().send_logs_level.toString());
                 CurrentThread::attachInternalTextLogsQueue(state.logs_queue);
             }
 
@@ -176,11 +182,12 @@ void TCPHandler::runImpl()
                 /// Reset the input stream, as we received an empty block while receiving external table data.
                 /// So, the stream has been marked as cancelled and we can't read from it anymore.
                 state.block_in.reset();
-                state.maybe_compressed_in.reset();  /// For more accurate accounting by MemoryTracker.
+                state.maybe_compressed_in.reset(); /// For more accurate accounting by MemoryTracker.
             });
 
+            bool may_have_embedded_data = client_revision >= DBMS_MIN_REVISION_WITH_CLIENT_SUPPORT_EMBEDDED_DATA;
             /// Processing Query
-            state.io = executeQuery(state.query, query_context, false, state.stage);
+            state.io = executeQuery(state.query, query_context, false, state.stage, may_have_embedded_data);
 
             if (state.io.out)
                 state.need_receive_data_for_insert = true;
@@ -194,9 +201,13 @@ void TCPHandler::runImpl()
             else
                 processOrdinaryQuery();
 
-            sendLogs();
+            /// Do it before sending end of stream, to have a chance to show log message in client.
+            query_scope->logPeakMemoryUsage();
 
+            sendLogs();
             sendEndOfStream();
+
+            query_scope.reset();
             state.reset();
         }
         catch (const Exception & e)
@@ -265,9 +276,7 @@ void TCPHandler::runImpl()
 
         try
         {
-            /// It will forcibly detach query even if unexpected error ocсurred and detachQuery() was not called
-            CurrentThread::detachQueryIfNotDetached();
-
+            query_scope.reset();
             state.reset();
         }
         catch (...)
@@ -292,10 +301,10 @@ void TCPHandler::runImpl()
 
 void TCPHandler::readData(const Settings & global_settings)
 {
-    auto receive_timeout = query_context.getSettingsRef().receive_timeout.value;
+    const auto receive_timeout = query_context.getSettingsRef().receive_timeout.value;
 
     /// Poll interval should not be greater than receive_timeout
-    size_t default_poll_interval = global_settings.poll_interval.value * 1000000;
+    const size_t default_poll_interval = global_settings.poll_interval.value * 1000000;
     size_t current_poll_interval = static_cast<size_t>(receive_timeout.totalMicroseconds());
     constexpr size_t min_poll_interval = 5000; // 5 ms
     size_t poll_interval = std::max(min_poll_interval, std::min(default_poll_interval, current_poll_interval));
@@ -352,9 +361,16 @@ void TCPHandler::processInsertQuery(const Settings & global_settings)
       */
     state.io.out->writePrefix();
 
+    /// Send ColumnsDescription for insertion table
+    if (client_revision >= DBMS_MIN_REVISION_WITH_COLUMN_DEFAULTS_METADATA)
+    {
+        const auto & db_and_table = query_context.getInsertionTable();
+        if (auto * columns = ColumnsDescription::loadFromContext(query_context, db_and_table.first, db_and_table.second))
+            sendTableColumns(*columns);
+    }
+
     /// Send block to the client - table structure.
-    Block block = state.io.out->getHeader();
-    sendData(block);
+    sendData(state.io.out->getHeader());
 
     readData(global_settings);
     state.io.out->writeSuffix();
@@ -370,6 +386,7 @@ void TCPHandler::processOrdinaryQuery()
         /// Send header-block, to allow client to prepare output format for data to send.
         {
             Block header = state.io.in->getHeader();
+
             if (header)
                 sendData(header);
         }
@@ -391,7 +408,7 @@ void TCPHandler::processOrdinaryQuery()
                 }
                 else
                 {
-                    if (state.progress.rows && after_send_progress.elapsed() / 1000 >= query_context.getSettingsRef().interactive_delay)
+                    if (after_send_progress.elapsed() / 1000 >= query_context.getSettingsRef().interactive_delay)
                     {
                         /// Some time passed and there is a progress.
                         after_send_progress.restart();
@@ -468,53 +485,44 @@ void TCPHandler::processTablesStatusRequest()
 
 void TCPHandler::sendProfileInfo()
 {
-    if (const IProfilingBlockInputStream * input = dynamic_cast<const IProfilingBlockInputStream *>(state.io.in.get()))
-    {
-        writeVarUInt(Protocol::Server::ProfileInfo, *out);
-        input->getProfileInfo().write(*out);
-        out->next();
-    }
+    writeVarUInt(Protocol::Server::ProfileInfo, *out);
+    state.io.in->getProfileInfo().write(*out);
+    out->next();
 }
 
 
 void TCPHandler::sendTotals()
 {
-    if (IProfilingBlockInputStream * input = dynamic_cast<IProfilingBlockInputStream *>(state.io.in.get()))
+    const Block & totals = state.io.in->getTotals();
+
+    if (totals)
     {
-        const Block & totals = input->getTotals();
+        initBlockOutput(totals);
 
-        if (totals)
-        {
-            initBlockOutput(totals);
+        writeVarUInt(Protocol::Server::Totals, *out);
+        writeStringBinary("", *out);
 
-            writeVarUInt(Protocol::Server::Totals, *out);
-            writeStringBinary("", *out);
-
-            state.block_out->write(totals);
-            state.maybe_compressed_out->next();
-            out->next();
-        }
+        state.block_out->write(totals);
+        state.maybe_compressed_out->next();
+        out->next();
     }
 }
 
 
 void TCPHandler::sendExtremes()
 {
-    if (IProfilingBlockInputStream * input = dynamic_cast<IProfilingBlockInputStream *>(state.io.in.get()))
+    Block extremes = state.io.in->getExtremes();
+
+    if (extremes)
     {
-        Block extremes = input->getExtremes();
+        initBlockOutput(extremes);
 
-        if (extremes)
-        {
-            initBlockOutput(extremes);
+        writeVarUInt(Protocol::Server::Extremes, *out);
+        writeStringBinary("", *out);
 
-            writeVarUInt(Protocol::Server::Extremes, *out);
-            writeStringBinary("", *out);
-
-            state.block_out->write(extremes);
-            state.maybe_compressed_out->next();
-            out->next();
-        }
+        state.block_out->write(extremes);
+        state.maybe_compressed_out->next();
+        out->next();
     }
 }
 
@@ -711,12 +719,12 @@ bool TCPHandler::receiveData()
             {
                 NamesAndTypesList columns = block.getNamesAndTypesList();
                 storage = StorageMemory::create(external_table_name,
-                    ColumnsDescription{columns, NamesAndTypesList{}, NamesAndTypesList{}, ColumnDefaults{}});
+                    ColumnsDescription{columns, NamesAndTypesList{}, NamesAndTypesList{}, ColumnDefaults{}, ColumnComments{}, ColumnCodecs{}});
                 storage->startup();
                 query_context.addExternalTable(external_table_name, storage);
             }
             /// The data will be written directly to the table.
-            state.io.out = storage->write(ASTPtr(), query_context.getSettingsRef());
+            state.io.out = storage->write(ASTPtr(), query_context);
         }
         if (block)
             state.io.out->write(block);
@@ -736,9 +744,15 @@ void TCPHandler::initBlockInput()
         else
             state.maybe_compressed_in = in;
 
+        Block header;
+        if (state.io.out)
+            header = state.io.out->getHeader();
+
         state.block_in = std::make_shared<NativeBlockInputStream>(
             *state.maybe_compressed_in,
-            client_revision);
+            header,
+            client_revision,
+            !connection_context.getSettingsRef().low_cardinality_allow_in_native_format);
     }
 }
 
@@ -749,9 +763,14 @@ void TCPHandler::initBlockOutput(const Block & block)
     {
         if (!state.maybe_compressed_out)
         {
+            std::string method = query_context.getSettingsRef().network_compression_method;
+            std::optional<int> level;
+            if (method == "ZSTD")
+                level = query_context.getSettingsRef().network_zstd_compression_level;
+
             if (state.compression == Protocol::Compression::Enable)
                 state.maybe_compressed_out = std::make_shared<CompressedWriteBuffer>(
-                    *out, CompressionSettings(query_context.getSettingsRef()));
+                    *out, CompressionCodecFactory::instance().get(method, level));
             else
                 state.maybe_compressed_out = out;
         }
@@ -759,7 +778,8 @@ void TCPHandler::initBlockOutput(const Block & block)
         state.block_out = std::make_shared<NativeBlockOutputStream>(
             *state.maybe_compressed_out,
             client_revision,
-            block.cloneEmpty());
+            block.cloneEmpty(),
+            !connection_context.getSettingsRef().low_cardinality_allow_in_native_format);
     }
 }
 
@@ -771,7 +791,8 @@ void TCPHandler::initLogsBlockOutput(const Block & block)
         state.logs_block_out = std::make_shared<NativeBlockOutputStream>(
             *out,
             client_revision,
-            block.cloneEmpty());
+            block.cloneEmpty(),
+            !connection_context.getSettingsRef().low_cardinality_allow_in_native_format);
     }
 }
 
@@ -836,6 +857,16 @@ void TCPHandler::sendLogData(const Block & block)
     out->next();
 }
 
+void TCPHandler::sendTableColumns(const ColumnsDescription & columns)
+{
+    writeVarUInt(Protocol::Server::TableColumns, *out);
+
+    /// Send external table name (empty name is the main table)
+    writeStringBinary("", *out);
+    writeStringBinary(columns.toString(), *out);
+
+    out->next();
+}
 
 void TCPHandler::sendException(const Exception & e, bool with_stack_trace)
 {

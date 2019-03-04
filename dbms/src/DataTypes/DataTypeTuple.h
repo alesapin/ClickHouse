@@ -1,6 +1,6 @@
 #pragma once
 
-#include <DataTypes/IDataType.h>
+#include <DataTypes/DataTypeWithSimpleSerialization.h>
 
 
 namespace DB
@@ -16,7 +16,7 @@ namespace DB
   *
   * All tuples with same size and types of elements are equivalent for expressions, regardless to names of elements.
   */
-class DataTypeTuple final : public IDataType
+class DataTypeTuple final : public DataTypeWithSimpleSerialization
 {
 private:
     DataTypes elems;
@@ -29,7 +29,7 @@ public:
     DataTypeTuple(const DataTypes & elems, const Strings & names);
 
     TypeIndex getTypeId() const override { return TypeIndex::Tuple; }
-    std::string getName() const override;
+    std::string doGetName() const override;
     const char * getFamilyName() const override { return "Tuple"; }
 
     bool canBeInsideNullable() const override { return false; }
@@ -39,11 +39,7 @@ public:
     void serializeBinary(const IColumn & column, size_t row_num, WriteBuffer & ostr) const override;
     void deserializeBinary(IColumn & column, ReadBuffer & istr) const override;
     void serializeText(const IColumn & column, size_t row_num, WriteBuffer & ostr, const FormatSettings &) const override;
-    void deserializeText(IColumn & column, ReadBuffer & istr, const FormatSettings &) const;
-    void serializeTextEscaped(const IColumn & column, size_t row_num, WriteBuffer & ostr, const FormatSettings &) const override;
-    void deserializeTextEscaped(IColumn & column, ReadBuffer & istr, const FormatSettings &) const override;
-    void serializeTextQuoted(const IColumn & column, size_t row_num, WriteBuffer & ostr, const FormatSettings &) const override;
-    void deserializeTextQuoted(IColumn & column, ReadBuffer & istr, const FormatSettings &) const override;
+    void deserializeText(IColumn & column, ReadBuffer & istr, const FormatSettings &) const override;
     void serializeTextJSON(const IColumn & column, size_t row_num, WriteBuffer & ostr, const FormatSettings &) const override;
     void deserializeTextJSON(IColumn & column, ReadBuffer & istr, const FormatSettings &) const override;
     void serializeTextXML(const IColumn & column, size_t row_num, WriteBuffer & ostr, const FormatSettings &) const override;
@@ -81,6 +77,9 @@ public:
             DeserializeBinaryBulkSettings & settings,
             DeserializeBinaryBulkStatePtr & state) const override;
 
+    void serializeProtobuf(const IColumn & column, size_t row_num, ProtobufWriter & protobuf, size_t & value_index) const override;
+    void deserializeProtobuf(IColumn & column, ProtobufReader & reader, bool allow_add_row, bool & row_added) const override;
+
     MutableColumnPtr createColumn() const override;
 
     Field getDefault() const override;
@@ -100,6 +99,8 @@ public:
     const Strings & getElementNames() const { return names; }
 
     size_t getPositionByName(const String & name) const;
+
+    bool haveExplicitNames() const { return have_explicit_names; }
 };
 
 }

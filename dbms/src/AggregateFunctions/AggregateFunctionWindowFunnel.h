@@ -9,7 +9,6 @@
 #include <IO/ReadHelpers.h>
 #include <IO/WriteHelpers.h>
 #include <Common/ArenaAllocator.h>
-#include <Common/typeid_cast.h>
 #include <ext/range.h>
 
 #include <AggregateFunctions/IAggregateFunction.h>
@@ -17,10 +16,12 @@
 
 namespace DB
 {
+
 namespace ErrorCodes
 {
     extern const int NUMBER_OF_ARGUMENTS_DOESNT_MATCH;
     extern const int TOO_MANY_ARGUMENTS_FOR_FUNCTION;
+    extern const int ILLEGAL_TYPE_OF_ARGUMENT;
 }
 
 struct ComparePairFirst final
@@ -188,16 +189,17 @@ public:
     }
 
     AggregateFunctionWindowFunnel(const DataTypes & arguments, const Array & params)
+        : IAggregateFunctionDataHelper<AggregateFunctionWindowFunnelData, AggregateFunctionWindowFunnel>(arguments, params)
     {
         const auto time_arg = arguments.front().get();
-        if (!typeid_cast<const DataTypeDateTime *>(time_arg) && !typeid_cast<const DataTypeUInt32 *>(time_arg))
+        if (!WhichDataType(time_arg).isDateTime() && !WhichDataType(time_arg).isUInt32())
             throw Exception{"Illegal type " + time_arg->getName() + " of first argument of aggregate function " + getName()
-                + ", must be DateTime or UInt32"};
+                + ", must be DateTime or UInt32", ErrorCodes::ILLEGAL_TYPE_OF_ARGUMENT};
 
         for (const auto i : ext::range(1, arguments.size()))
         {
             auto cond_arg = arguments[i].get();
-            if (!typeid_cast<const DataTypeUInt8 *>(cond_arg))
+            if (!isUInt8(cond_arg))
                 throw Exception{"Illegal type " + cond_arg->getName() + " of argument " + toString(i + 1) + " of aggregate function "
                         + getName() + ", must be UInt8",
                     ErrorCodes::ILLEGAL_TYPE_OF_ARGUMENT};

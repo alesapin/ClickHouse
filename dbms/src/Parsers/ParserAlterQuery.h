@@ -8,21 +8,23 @@ namespace DB
 
 /** Query like this:
   * ALTER TABLE [db.]name [ON CLUSTER cluster]
-  *     [ADD COLUMN col_name type [AFTER col_after],]
-  *     [DROP COLUMN col_to_drop, ...]
-  *     [CLEAR COLUMN col_to_clear [IN PARTITION partition],]
-  *     [MODIFY COLUMN col_to_modify type, ...]
+  *     [ADD COLUMN [IF NOT EXISTS] col_name type [AFTER col_after],]
+  *     [DROP COLUMN [IF EXISTS] col_to_drop, ...]
+  *     [CLEAR COLUMN [IF EXISTS] col_to_clear [IN PARTITION partition],]
+  *     [MODIFY COLUMN [IF EXISTS] col_to_modify type, ...]
   *     [MODIFY PRIMARY KEY (a, b, c...)]
+  *     [COMMENT COLUMN [IF EXISTS] col_name string]
   *     [DROP|DETACH|ATTACH PARTITION|PART partition, ...]
   *     [FETCH PARTITION partition FROM ...]
-  *     [FREEZE PARTITION]
+  *     [FREEZE [PARTITION] [WITH NAME name]]
   *     [DELETE WHERE ...]
+  *     [UPDATE col_name = expr, ... WHERE ...]
   */
 
-class ParserAlterCommand : public IParserBase
+class ParserAlterQuery : public IParserBase
 {
 protected:
-    const char * getName() const { return "ALTER command"; }
+    const char * getName() const { return "ALTER query"; }
     bool parseImpl(Pos & pos, ASTPtr & node, Expected & expected);
 };
 
@@ -35,10 +37,19 @@ protected:
 };
 
 
-class ParserAlterQuery : public IParserBase
+class ParserAlterCommand : public IParserBase
 {
 protected:
-    const char * getName() const { return "ALTER query"; }
+    const char * getName() const { return "ALTER command"; }
+    bool parseImpl(Pos & pos, ASTPtr & node, Expected & expected);
+};
+
+
+/// Part of the UPDATE command of the form: col_name = expr
+class ParserAssignment : public IParserBase
+{
+protected:
+    const char * getName() const { return "column assignment"; }
     bool parseImpl(Pos & pos, ASTPtr & node, Expected & expected);
 };
 

@@ -16,11 +16,12 @@ namespace Poco { class Logger; }
 namespace DB
 {
 
-class ExpressionAnalyzer;
 class ASTSelectQuery;
 struct SubqueryForSet;
 class InterpreterSelectWithUnionQuery;
 
+struct SyntaxAnalyzerResult;
+using SyntaxAnalyzerResultPtr = std::shared_ptr<const SyntaxAnalyzerResult>;
 
 /** Interprets the SELECT query. Returns the stream of blocks with the results of the query before `to_stage` stage.
   */
@@ -51,7 +52,8 @@ public:
         const Names & required_result_column_names = Names{},
         QueryProcessingStage::Enum to_stage_ = QueryProcessingStage::Complete,
         size_t subquery_depth_ = 0,
-        bool only_analyze_ = false);
+        bool only_analyze_ = false,
+        bool modify_inplace = false);
 
     /// Read data not from the table specified in the query, but from the prepared source `input`.
     InterpreterSelectQuery(
@@ -59,7 +61,8 @@ public:
         const Context & context_,
         const BlockInputStreamPtr & input_,
         QueryProcessingStage::Enum to_stage_ = QueryProcessingStage::Complete,
-        bool only_analyze_ = false);
+        bool only_analyze_ = false,
+        bool modify_inplace = false);
 
     /// Read data not from the table specified in the query, but from the specified `storage_`.
     InterpreterSelectQuery(
@@ -67,7 +70,8 @@ public:
         const Context & context_,
         const StoragePtr & storage_,
         QueryProcessingStage::Enum to_stage_ = QueryProcessingStage::Complete,
-        bool only_analyze_ = false);
+        bool only_analyze_ = false,
+        bool modify_inplace = false);
 
     ~InterpreterSelectQuery() override;
 
@@ -81,6 +85,8 @@ public:
 
     void ignoreWithTotals();
 
+    ASTPtr getQuery() const { return query_ptr; }
+
 private:
     InterpreterSelectQuery(
         const ASTPtr & query_ptr_,
@@ -90,7 +96,8 @@ private:
         const Names & required_result_column_names,
         QueryProcessingStage::Enum to_stage_,
         size_t subquery_depth_,
-        bool only_analyze_);
+        bool only_analyze_,
+        bool modify_inplace);
 
 
     struct Pipeline
@@ -131,7 +138,7 @@ private:
 
     struct AnalysisResult
     {
-        bool has_join       = false;
+        bool hasJoin() const { return before_join.get(); }
         bool has_where      = false;
         bool need_aggregate = false;
         bool has_having     = false;
@@ -150,6 +157,9 @@ private:
 
         /// Columns from the SELECT list, before renaming them to aliases.
         Names selected_columns;
+
+        /// Columns will be removed after prewhere actions execution.
+        Names columns_to_remove_after_prewhere;
 
         /// Do I need to perform the first part of the pipeline - running on remote servers during distributed processing.
         bool first_stage = false;
@@ -172,7 +182,8 @@ private:
     /// dry_run - don't read from table, use empty header block instead.
     void executeWithMultipleStreamsImpl(Pipeline & pipeline, const BlockInputStreamPtr & input, bool dry_run);
 
-    void executeFetchColumns(QueryProcessingStage::Enum processing_stage, Pipeline & pipeline, const PrewhereInfoPtr & prewhere_info);
+    void executeFetchColumns(QueryProcessingStage::Enum processing_stage, Pipeline & pipeline,
+                             const PrewhereInfoPtr & prewhere_info, const Names & columns_to_remove_after_prewhere);
 
     void executeWhere(Pipeline & pipeline, const ExpressionActionsPtr & expression, bool remove_filter);
     void executeAggregation(Pipeline & pipeline, const ExpressionActionsPtr & expression, bool overflow_row, bool final);
@@ -190,7 +201,17 @@ private:
     void executeDistinct(Pipeline & pipeline, bool before_order, Names columns);
     void executeExtremes(Pipeline & pipeline);
     void executeSubqueriesInSetsAndJoins(Pipeline & pipeline, std::unordered_map<String, SubqueryForSet> & subqueries_for_sets);
-    void executeRollup(Pipeline & pipeline);
+
+    /// If pipeline has several streams with different headers, add ConvertingBlockInputStream to first header.
+    void unifyStreams(Pipeline & pipeline);
+
+    enum class Modificator
+    {
+        ROLLUP = 0,
+        CUBE = 1
+    };
+
+    void executeRollupOrCube(Pipeline & pipeline, Modificator modificator);
 
     /** If there is a SETTINGS section in the SELECT query, then apply settings from it.
       *
@@ -205,6 +226,8 @@ private:
     Context context;
     QueryProcessingStage::Enum to_stage;
     size_t subquery_depth = 0;
+    NamesAndTypesList source_columns;
+    SyntaxAnalyzerResultPtr syntax_analyzer_result;
     std::unique_ptr<ExpressionAnalyzer> query_analyzer;
 
     /// How many streams we ask for storage to produce, and in how many threads we will do further processing.

@@ -1,8 +1,6 @@
 #include <Parsers/ParserSystemQuery.h>
 #include <Parsers/ASTSystemQuery.h>
 #include <Parsers/CommonParsers.h>
-#include <Parsers/ASTLiteral.h>
-#include <Parsers/ASTIdentifier.h>
 #include <Parsers/parseIdentifierOrStringLiteral.h>
 #include <Parsers/ExpressionElementParsers.h>
 #include <Parsers/parseDatabaseAndTableName.h>
@@ -60,7 +58,7 @@ bool ParserSystemQuery::parseImpl(IParser::Pos & pos, ASTPtr & node, Expected & 
         case Type::STOP_FETCHES:
         case Type::START_FETCHES:
         case Type::STOP_REPLICATED_SENDS:
-        case Type::START_REPLICATEDS_SENDS:
+        case Type::START_REPLICATED_SENDS:
         case Type::STOP_REPLICATION_QUEUES:
         case Type::START_REPLICATION_QUEUES:
             parseDatabaseAndTableName(pos, expected, res->target_database, res->target_table);

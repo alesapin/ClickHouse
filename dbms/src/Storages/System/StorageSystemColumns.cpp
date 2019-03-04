@@ -11,7 +11,6 @@
 #include <Storages/VirtualColumnUtils.h>
 #include <Parsers/queryToString.h>
 #include <Parsers/ASTSelectQuery.h>
-#include <Parsers/ASTLiteral.h>
 #include <Databases/IDatabase.h>
 
 
@@ -37,6 +36,12 @@ StorageSystemColumns::StorageSystemColumns(const std::string & name_)
         { "data_compressed_bytes",      std::make_shared<DataTypeUInt64>() },
         { "data_uncompressed_bytes",    std::make_shared<DataTypeUInt64>() },
         { "marks_bytes",                std::make_shared<DataTypeUInt64>() },
+        { "comment",                    std::make_shared<DataTypeString>() },
+        { "is_in_partition_key", std::make_shared<DataTypeUInt8>() },
+        { "is_in_sorting_key", std::make_shared<DataTypeUInt8>() },
+        { "is_in_primary_key", std::make_shared<DataTypeUInt8>() },
+        { "is_in_sampling_key", std::make_shared<DataTypeUInt8>() },
+        { "compression_codec", std::make_shared<DataTypeString>() },
     }));
 }
 
@@ -47,18 +52,22 @@ namespace
 }
 
 
-class ColumnsBlockInputStream : public IProfilingBlockInputStream
+class ColumnsBlockInputStream : public IBlockInputStream
 {
 public:
     ColumnsBlockInputStream(
         const std::vector<UInt8> & columns_mask,
         const Block & header,
-        size_t max_block_size,
+        UInt64 max_block_size,
         ColumnPtr databases,
         ColumnPtr tables,
-        Storages storages)
-        : columns_mask(columns_mask), header(header), max_block_size(max_block_size),
-        databases(databases), tables(tables), storages(std::move(storages)), total_tables(tables->size()) {}
+        Storages storages,
+        String query_id_)
+        : columns_mask(columns_mask), header(header), max_block_size(max_block_size)
+        , databases(databases), tables(tables), storages(std::move(storages))
+        , query_id(std::move(query_id_)), total_tables(tables->size())
+    {
+    }
 
     String getName() const override { return "Columns"; }
     Block getHeader() const override { return header; }
@@ -81,6 +90,12 @@ protected:
 
             NamesAndTypesList columns;
             ColumnDefaults column_defaults;
+            ColumnComments column_comments;
+            ColumnCodecs column_codecs;
+            Names cols_required_for_partition_key;
+            Names cols_required_for_sorting_key;
+            Names cols_required_for_primary_key;
+            Names cols_required_for_sampling;
             MergeTreeData::ColumnSizeByName column_sizes;
 
             {
@@ -89,7 +104,7 @@ protected:
 
                 try
                 {
-                    table_lock = storage->lockStructure(false, __PRETTY_FUNCTION__);
+                    table_lock = storage->lockStructure(false, query_id);
                 }
                 catch (const Exception & e)
                 {
@@ -105,7 +120,14 @@ protected:
                 }
 
                 columns = storage->getColumns().getAll();
+                column_codecs = storage->getColumns().codecs;
                 column_defaults = storage->getColumns().defaults;
+                column_comments = storage->getColumns().comments;
+
+                cols_required_for_partition_key = storage->getColumnsRequiredForPartitionKey();
+                cols_required_for_sorting_key = storage->getColumnsRequiredForSortingKey();
+                cols_required_for_primary_key = storage->getColumnsRequiredForPrimaryKey();
+                cols_required_for_sampling = storage->getColumnsRequiredForSampling();
 
                 /** Info about sizes of columns for tables of MergeTree family.
                 * NOTE: It is possible to add getter for this info to IStorage interface.
@@ -166,11 +188,55 @@ protected:
                     else
                     {
                         if (columns_mask[src_index++])
-                            res_columns[res_index++]->insert(static_cast<UInt64>(it->second.data_compressed));
+                            res_columns[res_index++]->insert(it->second.data_compressed);
                         if (columns_mask[src_index++])
-                            res_columns[res_index++]->insert(static_cast<UInt64>(it->second.data_uncompressed));
+                            res_columns[res_index++]->insert(it->second.data_uncompressed);
                         if (columns_mask[src_index++])
-                            res_columns[res_index++]->insert(static_cast<UInt64>(it->second.marks));
+                            res_columns[res_index++]->insert(it->second.marks);
+                    }
+                }
+
+                {
+                    const auto it = column_comments.find(column.name);
+                    if (it == std::end(column_comments))
+                    {
+                        if (columns_mask[src_index++])
+                            res_columns[res_index++]->insertDefault();
+                    }
+                    else
+                    {
+                        if (columns_mask[src_index++])
+                            res_columns[res_index++]->insert(it->second);
+                    }
+                }
+
+                {
+                    auto find_in_vector = [&key = column.name](const Names& names)
+                    {
+                        return std::find(names.cbegin(), names.cend(), key) != names.end();
+                    };
+
+                    if (columns_mask[src_index++])
+                        res_columns[res_index++]->insert(find_in_vector(cols_required_for_partition_key));
+                    if (columns_mask[src_index++])
+                        res_columns[res_index++]->insert(find_in_vector(cols_required_for_sorting_key));
+                    if (columns_mask[src_index++])
+                        res_columns[res_index++]->insert(find_in_vector(cols_required_for_primary_key));
+                    if (columns_mask[src_index++])
+                        res_columns[res_index++]->insert(find_in_vector(cols_required_for_sampling));
+                }
+
+                {
+                    const auto it = column_codecs.find(column.name);
+                    if (it == std::end(column_codecs))
+                    {
+                        if (columns_mask[src_index++])
+                            res_columns[res_index++]->insertDefault();
+                    }
+                    else
+                    {
+                        if (columns_mask[src_index++])
+                            res_columns[res_index++]->insert("CODEC(" + it->second->getCodecDesc() + ")");
                     }
                 }
 
@@ -185,10 +251,11 @@ protected:
 private:
     std::vector<UInt8> columns_mask;
     Block header;
-    size_t max_block_size;
+    UInt64 max_block_size;
     ColumnPtr databases;
     ColumnPtr tables;
     Storages storages;
+    String query_id;
     size_t db_table_num = 0;
     size_t total_tables;
 };
@@ -198,11 +265,10 @@ BlockInputStreams StorageSystemColumns::read(
     const Names & column_names,
     const SelectQueryInfo & query_info,
     const Context & context,
-    QueryProcessingStage::Enum processed_stage,
+    QueryProcessingStage::Enum /*processed_stage*/,
     const size_t max_block_size,
     const unsigned /*num_streams*/)
 {
-    checkQueryProcessingStage(processed_stage, context);
     check(column_names);
 
     /// Create a mask of what columns are needed in the result.
@@ -282,7 +348,8 @@ BlockInputStreams StorageSystemColumns::read(
 
     return {std::make_shared<ColumnsBlockInputStream>(
         std::move(columns_mask), std::move(res_block), max_block_size,
-        std::move(filtered_database_column), std::move(filtered_table_column), std::move(storages))};
+        std::move(filtered_database_column), std::move(filtered_table_column), std::move(storages),
+        context.getCurrentQueryId())};
 }
 
 }

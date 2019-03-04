@@ -21,13 +21,6 @@ const Type * checkAndGetDataType(const IDataType * data_type)
 }
 
 template <typename Type>
-bool checkDataType(const IDataType * data_type)
-{
-    return checkAndGetDataType<Type>(data_type);
-}
-
-
-template <typename Type>
 const Type * checkAndGetColumn(const IColumn * column)
 {
     return typeid_cast<const Type *>(column);
@@ -80,13 +73,13 @@ const ColumnConst * checkAndGetColumnConstStringOrFixedString(const IColumn * co
 template <typename T>
 inline std::enable_if_t<!IsDecimalNumber<T>, Field> toField(const T & x)
 {
-    return Field(typename NearestFieldType<T>::Type(x));
+    return Field(NearestFieldType<T>(x));
 }
 
 template <typename T>
 inline std::enable_if_t<IsDecimalNumber<T>, Field> toField(const T & x, UInt32 scale)
 {
-    return Field(typename NearestFieldType<T>::Type(x, scale));
+    return Field(NearestFieldType<T>(x, scale));
 }
 
 

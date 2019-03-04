@@ -7,16 +7,17 @@
 #include <mutex>
 #include <thread>
 #include <atomic>
+#include <optional>
 
 #include <Common/config.h>
-#include <common/MultiVersion.h>
+#include <Common/MultiVersion.h>
 #include <Common/LRUCache.h>
+#include <Common/ThreadPool.h>
 #include <Core/Types.h>
 #include <Core/NamesAndTypes.h>
 #include <Core/Block.h>
 #include <Interpreters/Settings.h>
 #include <Interpreters/ClientInfo.h>
-#include <IO/CompressionSettings.h>
 
 
 namespace Poco
@@ -74,10 +75,10 @@ class IBlockOutputStream;
 using BlockInputStreamPtr = std::shared_ptr<IBlockInputStream>;
 using BlockOutputStreamPtr = std::shared_ptr<IBlockOutputStream>;
 class Block;
-struct SystemLogs;
-using SystemLogsPtr = std::shared_ptr<SystemLogs>;
 class ActionLocksManager;
 using ActionLocksManagerPtr = std::shared_ptr<ActionLocksManager>;
+class ShellCommand;
+class ICompressionCodec;
 
 #if USE_EMBEDDED_COMPILER
 
@@ -110,8 +111,6 @@ private:
     using Shared = std::shared_ptr<ContextShared>;
     Shared shared;
 
-    std::shared_ptr<IRuntimeComponentsFactory> runtime_components_factory;
-
     ClientInfo client_info;
     ExternalTablesInitializer external_tables_initializer_callback;
 
@@ -121,6 +120,7 @@ private:
     using ProgressCallback = std::function<void(const Progress & progress)>;
     ProgressCallback progress_callback;                 /// Callback for tracking progress of query execution.
     QueryStatus * process_list_elem = nullptr;   /// For tracking total resource usage for query.
+    std::pair<String, String> insertion_table;  /// Saved insertion table in query context
 
     String default_format;  /// Format, used when server formats data by itself and if query does not have FORMAT specification.
                             /// Thus, used in HTTP interface. If not specified - then some globally default format is used.
@@ -129,7 +129,6 @@ private:
     Context * query_context = nullptr;
     Context * session_context = nullptr;    /// Session context or nullptr. Could be equal to this.
     Context * global_context = nullptr;     /// Global context or nullptr. Could be equal to this.
-    SystemLogsPtr system_logs;              /// Used to log queries and operations on parts
 
     UInt64 session_close_cycle = 0;
     bool session_is_used = false;
@@ -145,10 +144,11 @@ private:
 
 public:
     /// Create initial Context with ContextShared and etc.
-    static Context createGlobal(std::shared_ptr<IRuntimeComponentsFactory> runtime_components_factory);
+    static Context createGlobal(std::unique_ptr<IRuntimeComponentsFactory> runtime_components_factory);
     static Context createGlobal();
 
     Context(const Context &) = default;
+    Context & operator=(const Context &) = default;
     ~Context();
 
     String getPath() const;
@@ -165,7 +165,7 @@ public:
 
     /// Global application configuration settings.
     void setConfig(const ConfigurationPtr & config);
-    Poco::Util::AbstractConfiguration & getConfigRef() const;
+    const Poco::Util::AbstractConfiguration & getConfigRef() const;
 
     /** Take the list of users, quotas and configuration profiles from this config.
       * The list of users is completely replaced.
@@ -224,15 +224,17 @@ public:
     DatabasePtr detachDatabase(const String & database_name);
 
     /// Get an object that protects the table from concurrently executing multiple DDL operations.
-    /// If such an object already exists, an exception is thrown.
-    std::unique_ptr<DDLGuard> getDDLGuard(const String & database, const String & table, const String & message) const;
-    /// If the table already exists, it returns nullptr, otherwise guard is created.
-    std::unique_ptr<DDLGuard> getDDLGuardIfTableDoesntExist(const String & database, const String & table, const String & message) const;
+    std::unique_ptr<DDLGuard> getDDLGuard(const String & database, const String & table) const;
 
     String getCurrentDatabase() const;
     String getCurrentQueryId() const;
     void setCurrentDatabase(const String & name);
     void setCurrentQueryId(const String & query_id);
+
+    void killCurrentQuery();
+
+    void setInsertionTable(std::pair<String, String> && db_and_table) { insertion_table = db_and_table; }
+    const std::pair<String, String> & getInsertionTable() const { return insertion_table; }
 
     String getDefaultFormat() const;    /// If default_format is not specified, some global default format is returned.
     void setDefaultFormat(const String & name);
@@ -260,7 +262,7 @@ public:
     void tryCreateExternalModels() const;
 
     /// I/O formats.
-    BlockInputStreamPtr getInputFormat(const String & name, ReadBuffer & buf, const Block & sample, size_t max_block_size) const;
+    BlockInputStreamPtr getInputFormat(const String & name, ReadBuffer & buf, const Block & sample, UInt64 max_block_size) const;
     BlockOutputStreamPtr getOutputFormat(const String & name, WriteBuffer & buf, const Block & sample) const;
 
     InterserverIOHandler & getInterserverIOHandler();
@@ -279,6 +281,8 @@ public:
 
     /// The port that the server listens for executing SQL queries.
     UInt16 getTCPPort() const;
+
+    std::optional<UInt16> getTCPPortSecure() const;
 
     /// Get query for the CREATE table.
     ASTPtr getCreateTableQuery(const String & database_name, const String & table_name) const;
@@ -323,10 +327,10 @@ public:
 
 
     void setProgressCallback(ProgressCallback callback);
-    /// Used in InterpreterSelectQuery to pass it to the IProfilingBlockInputStream.
+    /// Used in InterpreterSelectQuery to pass it to the IBlockInputStream.
     ProgressCallback getProgressCallback() const;
 
-    /** Set in executeQuery and InterpreterSelectQuery. Then it is used in IProfilingBlockInputStream,
+    /** Set in executeQuery and InterpreterSelectQuery. Then it is used in IBlockInputStream,
       *  to update and monitor information about the total number of resources spent for the query.
       */
     void setProcessListElement(QueryStatus * elem);
@@ -367,7 +371,7 @@ public:
     BackgroundProcessingPool & getBackgroundPool();
     BackgroundSchedulePool & getSchedulePool();
 
-    void setDDLWorker(std::shared_ptr<DDLWorker> ddl_worker);
+    void setDDLWorker(std::unique_ptr<DDLWorker> ddl_worker);
     DDLWorker & getDDLWorker() const;
 
     Clusters & getClusters() const;
@@ -384,25 +388,25 @@ public:
     void initializeSystemLogs();
 
     /// Nullptr if the query log is not ready for this moment.
-    QueryLog * getQueryLog(bool create_if_not_exists = true);
-    QueryThreadLog * getQueryThreadLog(bool create_if_not_exists = true);
+    QueryLog * getQueryLog();
+    QueryThreadLog * getQueryThreadLog();
 
     /// Returns an object used to log opertaions with parts if it possible.
     /// Provide table name to make required cheks.
-    PartLog * getPartLog(const String & part_database, bool create_if_not_exists = true);
+    PartLog * getPartLog(const String & part_database);
 
     const MergeTreeSettings & getMergeTreeSettings() const;
 
     /// Prevents DROP TABLE if its size is greater than max_size (50GB by default, max_size=0 turn off this check)
     void setMaxTableSizeToDrop(size_t max_size);
-    void checkTableCanBeDropped(const String & database, const String & table, const size_t & table_size);
+    void checkTableCanBeDropped(const String & database, const String & table, const size_t & table_size) const;
 
     /// Prevents DROP PARTITION if its size is greater than max_size (50GB by default, max_size=0 turn off this check)
     void setMaxPartitionSizeToDrop(size_t max_size);
-    void checkPartitionCanBeDropped(const String & database, const String & table, const size_t & partition_size);
+    void checkPartitionCanBeDropped(const String & database, const String & table, const size_t & partition_size) const;
 
-    /// Lets you select the compression settings according to the conditions described in the configuration file.
-    CompressionSettings chooseCompressionSettings(size_t part_size, double part_size_ratio) const;
+    /// Lets you select the compression codec according to the conditions described in the configuration file.
+    std::shared_ptr<ICompressionCodec> chooseCompressionCodec(size_t part_size, double part_size_ratio) const;
 
     /// Get the server uptime in seconds.
     time_t getUptimeSeconds() const;
@@ -445,6 +449,9 @@ public:
     void dropCompiledExpressionCache() const;
 #endif
 
+    /// Add started bridge command. It will be killed after context destruction
+    void addXDBCBridgeCommand(std::unique_ptr<ShellCommand> cmd);
+
 private:
     /** Check if the current client has access to the specified database.
       * If access is denied, throw an exception.
@@ -463,26 +470,35 @@ private:
     /// Session will be closed after specified timeout.
     void scheduleCloseSession(const SessionKey & key, std::chrono::steady_clock::duration timeout);
 
-    void checkCanBeDropped(const String & database, const String & table, const size_t & size, const size_t & max_size_to_drop);
+    void checkCanBeDropped(const String & database, const String & table, const size_t & size, const size_t & max_size_to_drop) const;
 };
 
 
-/// Puts an element into the map, erases it in the destructor.
-/// If the element already exists in the map, throws an exception containing provided message.
+/// Allows executing DDL query only in one thread.
+/// Puts an element into the map, locks tables's mutex, counts how much threads run parallel query on the table,
+/// when counter is 0 erases element in the destructor.
+/// If the element already exists in the map, waits, when ddl query will be finished in other thread.
 class DDLGuard
 {
 public:
-    /// Element name -> message.
-    /// NOTE: using std::map here (and not std::unordered_map) to avoid iterator invalidation on insertion.
-    using Map = std::map<String, String>;
+    struct Entry
+    {
+        std::unique_ptr<std::mutex> mutex;
+        UInt32 counter;
+    };
 
-    DDLGuard(Map & map_, std::mutex & mutex_, std::unique_lock<std::mutex> && lock, const String & elem, const String & message);
+    /// Element name -> (mutex, counter).
+    /// NOTE: using std::map here (and not std::unordered_map) to avoid iterator invalidation on insertion.
+    using Map = std::map<String, Entry>;
+
+    DDLGuard(Map & map_, std::unique_lock<std::mutex> guards_lock_, const String & elem);
     ~DDLGuard();
 
 private:
     Map & map;
     Map::iterator it;
-    std::mutex & mutex;
+    std::unique_lock<std::mutex> guards_lock;
+    std::unique_lock<std::mutex> table_lock;
 };
 
 
@@ -503,7 +519,7 @@ private:
     std::mutex mutex;
     std::condition_variable cond;
     std::atomic<bool> quit{false};
-    std::thread thread{&SessionCleaner::run, this};
+    ThreadFromGlobalPool thread{&SessionCleaner::run, this};
 };
 
 }

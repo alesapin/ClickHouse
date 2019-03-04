@@ -31,6 +31,11 @@ void ITableDeclaration::setColumns(ColumnsDescription columns_)
     columns = std::move(columns_);
 }
 
+void ITableDeclaration::setIndicesDescription(IndicesDescription indices_)
+{
+    indices = std::move(indices_);
+}
+
 
 bool ITableDeclaration::hasColumn(const String & column_name) const
 {
@@ -47,7 +52,7 @@ Block ITableDeclaration::getSampleBlock() const
 {
     Block res;
 
-    for (const auto & col : boost::join(getColumns().ordinary, getColumns().materialized))
+    for (const auto & col : getColumns().getAllPhysical())
         res.insert({ col.type->createColumn(), col.type, col.name });
 
     return res;
@@ -229,7 +234,6 @@ void ITableDeclaration::check(const Block & block, bool need_all) const
     const NamesAndTypesList & available_columns = getColumns().getAllPhysical();
     const auto columns_map = getColumnsMap(available_columns);
 
-    using NameSet = std::unordered_set<String>;
     NameSet names_in_block;
 
     block.checkNumberOfRows();

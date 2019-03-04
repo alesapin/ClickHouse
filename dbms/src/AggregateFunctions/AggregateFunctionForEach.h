@@ -1,7 +1,6 @@
 #pragma once
 
 #include <Columns/ColumnArray.h>
-#include <Common/typeid_cast.h>
 #include <DataTypes/DataTypeArray.h>
 #include <AggregateFunctions/IAggregateFunction.h>
 
@@ -98,7 +97,8 @@ private:
 
 public:
     AggregateFunctionForEach(AggregateFunctionPtr nested_, const DataTypes & arguments)
-        : nested_func(nested_), num_arguments(arguments.size())
+        : IAggregateFunctionDataHelper<AggregateFunctionForEachData, AggregateFunctionForEach>(arguments, {})
+        , nested_func(nested_), num_arguments(arguments.size())
     {
         nested_size_of_data = nested_func->sizeOfData();
 
@@ -106,7 +106,7 @@ public:
             throw Exception("Aggregate function " + getName() + " require at least one argument", ErrorCodes::NUMBER_OF_ARGUMENTS_DOESNT_MATCH);
 
         for (const auto & type : arguments)
-            if (!typeid_cast<const DataTypeArray *>(type.get()))
+            if (!isArray(type))
                 throw Exception("All arguments for aggregate function " + getName() + " must be arrays", ErrorCodes::ILLEGAL_TYPE_OF_ARGUMENT);
     }
 
@@ -147,7 +147,7 @@ public:
         const ColumnArray & first_array_column = static_cast<const ColumnArray &>(*columns[0]);
         const IColumn::Offsets & offsets = first_array_column.getOffsets();
 
-        size_t begin = row_num == 0 ? 0 : offsets[row_num - 1];
+        size_t begin = offsets[row_num - 1];
         size_t end = offsets[row_num];
 
         /// Sanity check. NOTE We can implement specialization for a case with single argument, if the check will hurt performance.
@@ -232,7 +232,7 @@ public:
             nested_state += nested_size_of_data;
         }
 
-        offsets_to.push_back(offsets_to.empty() ? state.dynamic_array_size : offsets_to.back() + state.dynamic_array_size);
+        offsets_to.push_back(offsets_to.back() + state.dynamic_array_size);
     }
 
     bool allocatesMemoryInArena() const override

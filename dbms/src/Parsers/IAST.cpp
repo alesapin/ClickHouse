@@ -53,20 +53,26 @@ size_t IAST::checkSize(size_t max_size) const
 IAST::Hash IAST::getTreeHash() const
 {
     SipHash hash_state;
-    getTreeHashImpl(hash_state);
+    updateTreeHash(hash_state);
     IAST::Hash res;
     hash_state.get128(res.first, res.second);
     return res;
 }
 
 
-void IAST::getTreeHashImpl(SipHash & hash_state) const
+void IAST::updateTreeHash(SipHash & hash_state) const
+{
+    updateTreeHashImpl(hash_state);
+    hash_state.update(children.size());
+    for (const auto & child : children)
+        child->updateTreeHash(hash_state);
+}
+
+
+void IAST::updateTreeHashImpl(SipHash & hash_state) const
 {
     auto id = getID();
     hash_state.update(id.data(), id.size());
-    hash_state.update(children.size());
-    for (const auto & child : children)
-        child->getTreeHashImpl(hash_state);
 }
 
 
@@ -99,8 +105,10 @@ String IAST::getColumnName() const
 }
 
 
-void IAST::FormatSettings::writeIdentifier(const String & name, WriteBuffer & out) const
+void IAST::FormatSettings::writeIdentifier(const String & name) const
 {
+    WriteBufferFromOStream out(ostr, 32);
+
     switch (identifier_quoting_style)
     {
         case IdentifierQuotingStyle::None:
@@ -128,6 +136,8 @@ void IAST::FormatSettings::writeIdentifier(const String & name, WriteBuffer & ou
             break;
         }
     }
+
+    out.next();
 }
 
 }

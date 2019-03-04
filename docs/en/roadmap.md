@@ -1,21 +1,23 @@
 # Roadmap
 
-## Q3 2018
+## Q1 2019
 
-- `ALTER UPDATE` for mass changes to data using an approach similar to `ALTER DELETE`
-- Adding Protobuf and Parquet to the range of supported input/output formats
-- Improved compatibility with Tableau and other business analytics tools
+- JOIN syntax compatible with SQL standard:
+    - Mutliple `JOIN`s in single `SELECT`
+- Protobuf and Parquet input and output formats
+- Import/export from HDFS and S3
+- Lower metadata size in ZooKeeper
+- Adaptive index granularity for MergeTree engine family
 
-## Q4 2018
+## Q2 2019
 
-- JOIN syntax that conforms to the SQL standard:
-    - Multiple `JOIN`s in a single `SELECT`
-    - Setting the relationship between tables via `ON`
-    - Ability to refer to the table name instead of using a subquery
+- JOIN execution improvements:
+    - Distributed join not limited by memory
+- Resource pools for more precise distribution of cluster capacity between users
 
-- Improvements in the performance of JOIN:
-    - Distributed JOIN not limited by RAM
-    - Transferring predicates that depend on only one side via JOIN
+## Q3 2019
 
-- Resource pools for more accurate distribution of cluster capacity between its users
+- Fine-grained authorization
+- Integration with external authentication services
 
+[Original article](https://clickhouse.yandex/docs/en/roadmap/) <!--hide-->

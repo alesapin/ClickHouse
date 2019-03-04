@@ -1,5 +1,5 @@
-/** Allows to build programs with libc 2.18 and run on systems with at least libc 2.4,
-  *  such as Ubuntu Lucid or CentOS 6.
+/** Allows to build programs with libc 2.27 and run on systems with at least libc 2.4,
+  *  such as Ubuntu Hardy or CentOS 5.
   *
   * Also look at http://www.lightofdawn.org/wiki/wiki.cgi/NewAppsOnOldGlibc
   */
@@ -85,6 +85,28 @@ int __vasprintf_chk(char **s, int unused, const char *fmt, va_list ap)
     return vasprintf(s, fmt, ap);
 }
 
+int __asprintf_chk(char **result_ptr, int unused, const char *format, ...)
+{
+    int ret;
+    va_list ap;
+    va_start (ap, format);
+    ret = vasprintf(result_ptr, format, ap);
+    va_end (ap);
+    return ret;
+}
+
+int vdprintf(int fd, const char *format, va_list ap);
+
+int __dprintf_chk (int d, int unused, const char *format, ...)
+{
+  int ret;
+  va_list ap;
+  va_start (ap, format);
+  ret = vdprintf(d, format, ap);
+  va_end (ap);
+  return ret;
+}
+
 size_t fread(void *ptr, size_t size, size_t nmemb, void *stream);
 
 size_t __fread_chk(void *ptr, size_t unused, size_t size, size_t nmemb, void *stream)
@@ -147,7 +169,7 @@ const char * __shm_directory(size_t * len)
  * OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN
  * CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
-void explicit_bzero(void * buf, size_t len)
+void __attribute__((__weak__)) explicit_bzero(void * buf, size_t len)
 {
     memset(buf, 0, len);
     __asm__ __volatile__("" :: "r"(buf) : "memory");

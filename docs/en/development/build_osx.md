@@ -1,7 +1,6 @@
 # How to Build ClickHouse on Mac OS X
 
-Build should work on Mac OS X 10.12. If you're using earlier version, you can try to build ClickHouse using Gentoo Prefix and clang sl in this instruction.
-With appropriate changes, it should also work on any other Linux distribution.
+Build should work on Mac OS X 10.12.
 
 ## Install Homebrew
 
@@ -12,14 +11,14 @@ With appropriate changes, it should also work on any other Linux distribution.
 ## Install Required Compilers, Tools, and Libraries
 
 ```bash
-brew install cmake ninja gcc icu4c mariadb-connector-c openssl libtool gettext readline
+brew install cmake ninja gcc icu4c openssl libtool gettext readline
 ```
 
 ## Checkout ClickHouse Sources
 
 ```bash
-git clone --recursive --depth=10 git@github.com:yandex/ClickHouse.git
-# or: git clone --recursive --depth=10 https://github.com/yandex/ClickHouse.git
+git clone --recursive git@github.com:yandex/ClickHouse.git
+# or: git clone --recursive https://github.com/yandex/ClickHouse.git
 
 cd ClickHouse
 ```
@@ -31,7 +30,7 @@ For the latest stable version, switch to the `stable` branch.
 ```bash
 mkdir build
 cd build
-cmake .. -DCMAKE_CXX_COMPILER=`which g++-8`-DCMAKE_C_COMPILER=`which gcc-8`
+cmake .. -DCMAKE_CXX_COMPILER=`which g++-8` -DCMAKE_C_COMPILER=`which gcc-8`
 ninja
 cd ..
 ```
@@ -79,3 +78,5 @@ Reboot.
 
 To check if it's working, you can use `ulimit -n` command.
 
+
+[Original article](https://clickhouse.yandex/docs/en/development/build_osx/) <!--hide-->

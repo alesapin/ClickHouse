@@ -9,21 +9,23 @@
 #include <common/DateLUT.h>
 #include <common/LocalDate.h>
 #include <common/LocalDateTime.h>
-#include <common/find_first_symbols.h>
-#include <common/intExp.h>
+#include <common/find_symbols.h>
+#include <common/StringRef.h>
 
 #include <Core/Types.h>
 #include <Core/UUID.h>
+
 #include <Common/Exception.h>
 #include <Common/StringUtils/StringUtils.h>
 #include <Common/UInt128.h>
-#include <common/StringRef.h>
+#include <Common/intExp.h>
 
 #include <IO/WriteBuffer.h>
 #include <IO/WriteIntText.h>
 #include <IO/VarInt.h>
 #include <IO/DoubleConverter.h>
 #include <IO/WriteBufferFromString.h>
+
 #include <Formats/FormatSettings.h>
 
 
@@ -678,6 +680,9 @@ inline void writeBinary(const StringRef & x, WriteBuffer & buf) { writeStringBin
 inline void writeBinary(const Int128 & x, WriteBuffer & buf) { writePODBinary(x, buf); }
 inline void writeBinary(const UInt128 & x, WriteBuffer & buf) { writePODBinary(x, buf); }
 inline void writeBinary(const UInt256 & x, WriteBuffer & buf) { writePODBinary(x, buf); }
+inline void writeBinary(const Decimal32 & x, WriteBuffer & buf) { writePODBinary(x, buf); }
+inline void writeBinary(const Decimal64 & x, WriteBuffer & buf) { writePODBinary(x, buf); }
+inline void writeBinary(const Decimal128 & x, WriteBuffer & buf) { writePODBinary(x, buf); }
 inline void writeBinary(const LocalDate & x, WriteBuffer & buf) { writePODBinary(x, buf); }
 inline void writeBinary(const LocalDateTime & x, WriteBuffer & buf) { writePODBinary(x, buf); }
 

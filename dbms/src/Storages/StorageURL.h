@@ -28,7 +28,7 @@ public:
         size_t max_block_size,
         unsigned num_streams) override;
 
-    BlockOutputStreamPtr write(const ASTPtr & query, const Settings & settings) override;
+    BlockOutputStreamPtr write(const ASTPtr & query, const Context & context) override;
 
     void rename(const String & new_path_to_db, const String & new_database_name, const String & new_table_name) override;
 
@@ -59,6 +59,8 @@ private:
         const Context & context,
         QueryProcessingStage::Enum & processed_stage,
         size_t max_block_size) const;
+
+    virtual Block getHeaderBlock(const Names & column_names) const = 0;
 };
 
 class StorageURL : public ext::shared_ptr_helper<StorageURL>, public IStorageURLBase
@@ -76,6 +78,11 @@ public:
     String getName() const override
     {
         return "URL";
+    }
+
+    Block getHeaderBlock(const Names & /*column_names*/) const override
+    {
+        return getSampleBlock();
     }
 };
 }

@@ -11,7 +11,7 @@
 #include <IO/Operators.h>
 #include <IO/ReadBufferFromFileDescriptor.h>
 #include <IO/WriteBufferFromFileDescriptor.h>
-#include <IO/CompressedReadBuffer.h>
+#include <Compression/CompressedReadBuffer.h>
 
 
 /** How to test:
@@ -32,7 +32,7 @@ $ clickhouse-local --query="SELECT toString(rand64(1)) || toString(rand64(2)) ||
 
 # Run test
 
-$ for i in {1..10}; do echo $i; time ./read_float_perf < numbers$i.tsv; done
+$ for i in {1..10}; do echo $i; time ./read_float_perf 2 < numbers$i.tsv; done
 
   */
 

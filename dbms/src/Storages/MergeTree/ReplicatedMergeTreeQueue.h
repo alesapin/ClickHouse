@@ -8,6 +8,7 @@
 #include <Storages/MergeTree/ActiveDataPartSet.h>
 #include <Storages/MergeTree/MergeTreeData.h>
 #include <Storages/MergeTree/MergeTreeMutationStatus.h>
+#include <Storages/MergeTree/ReplicatedMergeTreeQuorumAddedParts.h>
 
 #include <Common/ZooKeeper/ZooKeeper.h>
 #include <Core/BackgroundSchedulePool.h>
@@ -96,6 +97,11 @@ private:
 
     struct MutationStatus
     {
+        MutationStatus(const ReplicatedMergeTreeMutationEntryPtr & entry_)
+            : entry(entry_)
+        {
+        }
+
         ReplicatedMergeTreeMutationEntryPtr entry;
 
         /// A number of parts that should be mutated/merged or otherwise moved to Obsolete state for this mutation to complete.
@@ -104,6 +110,11 @@ private:
         /// Note that is_done is not equivalent to parts_to_do == 0
         /// (even if parts_to_do == 0 some relevant parts can still commit in the future).
         bool is_done = false;
+
+        String latest_failed_part;
+        MergeTreePartInfo latest_failed_part_info;
+        time_t latest_fail_time = 0;
+        String latest_fail_reason;
     };
 
     std::map<String, MutationStatus> mutations_by_znode;
@@ -251,6 +262,10 @@ public:
     /// If watch_callback is not empty, will call it when new mutations appear in ZK.
     void updateMutations(zkutil::ZooKeeperPtr zookeeper, Coordination::WatchCallback watch_callback = {});
 
+    /// Remove a mutation from ZooKeeper and from the local set. Returns the removed entry or nullptr
+    /// if it could not be found.
+    ReplicatedMergeTreeMutationEntryPtr removeMutation(zkutil::ZooKeeperPtr zookeeper, const String & mutation_id);
+
     /** Remove the action from the queue with the parts covered by part_name (from ZK and from the RAM).
       * And also wait for the completion of their execution, if they are now being executed.
       */
@@ -375,7 +390,7 @@ private:
     std::unordered_map<String, std::set<Int64>> committing_blocks;
 
     /// Quorum state taken at some later time than prev_virtual_parts.
-    String last_quorum_part;
+    std::set<std::string> last_quorum_parts;
     String inprogress_quorum_part;
 };
 

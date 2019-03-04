@@ -11,6 +11,8 @@
 #include <Parsers/ParserDropQuery.h>
 #include <Parsers/ParserKillQueryQuery.h>
 #include <Parsers/ParserOptimizeQuery.h>
+#include <Parsers/ParserSetQuery.h>
+#include <Parsers/ASTExplainQuery.h>
 
 
 namespace DB
@@ -32,6 +34,17 @@ bool ParserQueryWithOutput::parseImpl(Pos & pos, ASTPtr & node, Expected & expec
     ParserKillQueryQuery kill_query_p;
 
     ASTPtr query;
+
+    ParserKeyword s_ast("AST");
+    ParserKeyword s_analyze("ANALYZE");
+    bool explain_ast = false;
+    bool analyze_syntax = false;
+
+    if (enable_explain && s_ast.ignore(pos, expected))
+        explain_ast = true;
+
+    if (enable_explain && s_analyze.ignore(pos, expected))
+        analyze_syntax = true;
 
     bool parsed = select_p.parse(pos, query, expected)
         || show_tables_p.parse(pos, query, expected)
@@ -69,12 +82,34 @@ bool ParserQueryWithOutput::parseImpl(Pos & pos, ASTPtr & node, Expected & expec
 
         if (!format_p.parse(pos, query_with_output.format, expected))
             return false;
-        typeid_cast<ASTIdentifier &>(*(query_with_output.format)).kind = ASTIdentifier::Format;
+        setIdentifierSpecial(query_with_output.format);
 
         query_with_output.children.push_back(query_with_output.format);
     }
 
-    node = query;
+    // SETTINGS key1 = value1, key2 = value2, ...
+    ParserKeyword s_settings("SETTINGS");
+    if (s_settings.ignore(pos, expected))
+    {
+        ParserSetQuery parser_settings(true);
+        if (!parser_settings.parse(pos, query_with_output.settings_ast, expected))
+            return false;
+        query_with_output.children.push_back(query_with_output.settings_ast);
+    }
+
+    if (explain_ast)
+    {
+        node = std::make_shared<ASTExplainQuery>(ASTExplainQuery::ParsedAST);
+        node->children.push_back(query);
+    }
+    else if (analyze_syntax)
+    {
+        node = std::make_shared<ASTExplainQuery>(ASTExplainQuery::AnalyzedSyntax);
+        node->children.push_back(query);
+    }
+    else
+        node = query;
+
     return true;
 }
 

@@ -1,5 +1,5 @@
+#include <Common/config.h>
 #include <Functions/registerFunctions.h>
-
 #include <Functions/FunctionFactory.h>
 
 
@@ -33,15 +33,18 @@ void registerFunctionsRound(FunctionFactory &);
 void registerFunctionsString(FunctionFactory &);
 void registerFunctionsStringArray(FunctionFactory &);
 void registerFunctionsStringSearch(FunctionFactory &);
+void registerFunctionsStringSimilarity(FunctionFactory &);
 void registerFunctionsURL(FunctionFactory &);
 void registerFunctionsVisitParam(FunctionFactory &);
 void registerFunctionsMath(FunctionFactory &);
-void registerFunctionsTransform(FunctionFactory &);
 void registerFunctionsGeo(FunctionFactory &);
-void registerFunctionsCharset(FunctionFactory &);
 void registerFunctionsNull(FunctionFactory &);
 void registerFunctionsFindCluster(FunctionFactory &);
-void registerFunctionsProjection(FunctionFactory &);
+void registerFunctionTransform(FunctionFactory &);
+
+#if USE_ICU
+void registerFunctionConvertCharset(FunctionFactory &);
+#endif
 
 void registerFunctions()
 {
@@ -70,15 +73,18 @@ void registerFunctions()
     registerFunctionsString(factory);
     registerFunctionsStringArray(factory);
     registerFunctionsStringSearch(factory);
+    registerFunctionsStringSimilarity(factory);
     registerFunctionsURL(factory);
     registerFunctionsVisitParam(factory);
     registerFunctionsMath(factory);
-    registerFunctionsTransform(factory);
     registerFunctionsGeo(factory);
-    registerFunctionsCharset(factory);
     registerFunctionsNull(factory);
     registerFunctionsFindCluster(factory);
-    registerFunctionsProjection(factory);
+    registerFunctionTransform(factory);
+
+#if USE_ICU
+    registerFunctionConvertCharset(factory);
+#endif
 }
 
 }
