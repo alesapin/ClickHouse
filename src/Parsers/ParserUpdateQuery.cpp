@@ -1,5 +1,6 @@
 #include <Parsers/ParserUpdateQuery.h>
 #include <Parsers/ASTUpdateQuery.h>
+#include <Parsers/ASTExpressionList.h>
 #include <Parsers/parseDatabaseAndTableName.h>
 #include <Parsers/ExpressionListParsers.h>
 #include <Parsers/ParserSetQuery.h>
@@ -52,6 +53,23 @@ bool ParserUpdateQuery::parseImpl(Pos & pos, ASTPtr & node, Expected & expected)
     {
         if (!parser_partition.parse(pos, query->partition, expected))
             return false;
+
+        /// Check for multi-partition: IN PARTITION p1, p2, ...
+        if (pos->type == TokenType::Comma)
+        {
+            auto list = make_intrusive<ASTExpressionList>();
+            list->children.push_back(std::move(query->partition));
+            query->partition = nullptr;
+            while (pos->type == TokenType::Comma)
+            {
+                ++pos;
+                ASTPtr next_partition;
+                if (!parser_partition.parse(pos, next_partition, expected))
+                    return false;
+                list->children.push_back(std::move(next_partition));
+            }
+            query->partitions = std::move(list);
+        }
     }
 
     if (!s_where.ignore(pos, expected))
@@ -88,6 +106,7 @@ bool ParserUpdateQuery::parseImpl(Pos & pos, ASTPtr & node, Expected & expected)
     add_to_children(query->database);
     add_to_children(query->table);
     add_to_children(query->partition);
+    add_to_children(query->partitions);
     add_to_children(query->predicate);
     add_to_children(query->assignments);
     add_to_children(query->settings_ast);

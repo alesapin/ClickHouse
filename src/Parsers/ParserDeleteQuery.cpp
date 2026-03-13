@@ -1,5 +1,6 @@
 #include <Parsers/ParserDeleteQuery.h>
 #include <Parsers/ASTDeleteQuery.h>
+#include <Parsers/ASTExpressionList.h>
 #include <Parsers/parseDatabaseAndTableName.h>
 #include <Parsers/ExpressionListParsers.h>
 #include <Parsers/ParserSetQuery.h>
@@ -44,6 +45,23 @@ bool ParserDeleteQuery::parseImpl(Pos & pos, ASTPtr & node, Expected & expected)
         {
             if (!parser_partition.parse(pos, query->partition, expected))
                 return false;
+
+            /// Check for multi-partition: IN PARTITION p1, p2, ...
+            if (pos->type == TokenType::Comma)
+            {
+                auto list = make_intrusive<ASTExpressionList>();
+                list->children.push_back(std::move(query->partition));
+                query->partition = nullptr;
+                while (pos->type == TokenType::Comma)
+                {
+                    ++pos;
+                    ASTPtr next_partition;
+                    if (!parser_partition.parse(pos, next_partition, expected))
+                        return false;
+                    list->children.push_back(std::move(next_partition));
+                }
+                query->partitions = std::move(list);
+            }
         }
 
         if (!s_where.ignore(pos, expected))
@@ -77,6 +95,9 @@ bool ParserDeleteQuery::parseImpl(Pos & pos, ASTPtr & node, Expected & expected)
 
     if (query->partition)
         query->children.push_back(query->partition);
+
+    if (query->partitions)
+        query->children.push_back(query->partitions);
 
     if (query->predicate)
         query->children.push_back(query->predicate);

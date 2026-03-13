@@ -5,6 +5,7 @@
 #include <Common/ZooKeeper/ZooKeeper.h>
 
 #include <optional>
+#include <set>
 
 
 namespace DB
@@ -111,6 +112,15 @@ public:
         const String & temp_path,
         const std::optional<String> & znode_data,
         zkutil::ZooKeeper & zookeeper_);
+
+    /// Acquires block number locks only in the specified partitions (not all).
+    EphemeralLocksInAllPartitions(
+        const String & block_numbers_path,
+        const String & path_prefix,
+        const String & temp_path,
+        const std::optional<String> & znode_data,
+        zkutil::ZooKeeper & zookeeper_,
+        const std::set<String> & partition_ids);
 
     EphemeralLocksInAllPartitions() = default;
 

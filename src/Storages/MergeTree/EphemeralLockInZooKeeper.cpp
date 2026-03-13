@@ -217,6 +217,43 @@ EphemeralLocksInAllPartitions::EphemeralLocksInAllPartitions(
     }
 }
 
+EphemeralLocksInAllPartitions::EphemeralLocksInAllPartitions(
+    const String & block_numbers_path,
+    const String & path_prefix,
+    const String & temp_path,
+    const std::optional<String> & znode_data,
+    zkutil::ZooKeeper & zookeeper_,
+    const std::set<String> & partition_ids)
+    : zookeeper(&zookeeper_)
+{
+    String holder_path = znode_data.value_or(temp_path + "/" + EphemeralLockInZooKeeper::LEGACY_LOCK_OTHER);
+
+    Coordination::Requests lock_ops;
+    std::vector<String> partitions(partition_ids.begin(), partition_ids.end());
+    for (const auto & partition : partitions)
+    {
+        String partition_path_prefix = block_numbers_path + "/" + partition + "/" + path_prefix;
+        lock_ops.push_back(zkutil::makeCreateRequest(
+                partition_path_prefix, holder_path, zkutil::CreateMode::EphemeralSequential));
+    }
+
+    Coordination::Responses lock_responses;
+    Coordination::Error rc = zookeeper_.tryMulti(lock_ops, lock_responses);
+    if (rc != Coordination::Error::ZOK)
+        throw Coordination::Exception(rc);
+
+    for (size_t i = 0; i < partitions.size(); ++i)
+    {
+        size_t prefix_size = block_numbers_path.size() + 1 + partitions[i].size() + 1 + path_prefix.size();
+        const String & path = dynamic_cast<const Coordination::CreateResponse &>(*lock_responses[i]).path_created;
+
+        const UInt64 number = parseSequentialNodeNumber(path, prefix_size);
+        warnIfBlockNumberIsHigh(number, path);
+        CurrentMetrics::max(CurrentMetrics::MaxAllocatedEphemeralLockSequentialNumber, number);
+        locks.push_back(LockInfo{path, partitions[i], number});
+    }
+}
+
 void EphemeralLocksInAllPartitions::unlock()
 {
     if (!zookeeper)

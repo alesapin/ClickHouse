@@ -168,6 +168,7 @@ bool ParserAlterCommand::parseImpl(Pos & pos, ASTPtr & node, Expected & expected
     ASTPtr command_projection;
     ASTPtr command_statistics_decl;
     ASTPtr command_partition;
+    ASTPtr command_partitions;
     ASTPtr command_predicate;
     ASTPtr command_update_assignments;
     ASTPtr command_comment;
@@ -860,6 +861,23 @@ bool ParserAlterCommand::parseImpl(Pos & pos, ASTPtr & node, Expected & expected
                 {
                     if (!parser_partition.parse(pos, command_partition, expected))
                         return false;
+
+                    /// Check for multi-partition: IN PARTITION p1, p2, ...
+                    if (pos->type == TokenType::Comma)
+                    {
+                        auto list = make_intrusive<ASTExpressionList>();
+                        list->children.push_back(std::move(command_partition));
+                        command_partition = nullptr;
+                        while (pos->type == TokenType::Comma)
+                        {
+                            ++pos;
+                            ASTPtr next_partition;
+                            if (!parser_partition.parse(pos, next_partition, expected))
+                                return false;
+                            list->children.push_back(std::move(next_partition));
+                        }
+                        command_partitions = std::move(list);
+                    }
                 }
 
                 if (!s_where.ignore(pos, expected))
@@ -891,6 +909,23 @@ bool ParserAlterCommand::parseImpl(Pos & pos, ASTPtr & node, Expected & expected
                 {
                     if (!parser_partition.parse(pos, command_partition, expected))
                         return false;
+
+                    /// Check for multi-partition: IN PARTITION p1, p2, ...
+                    if (pos->type == TokenType::Comma)
+                    {
+                        auto list = make_intrusive<ASTExpressionList>();
+                        list->children.push_back(std::move(command_partition));
+                        command_partition = nullptr;
+                        while (pos->type == TokenType::Comma)
+                        {
+                            ++pos;
+                            ASTPtr next_partition;
+                            if (!parser_partition.parse(pos, next_partition, expected))
+                                return false;
+                            list->children.push_back(std::move(next_partition));
+                        }
+                        command_partitions = std::move(list);
+                    }
                 }
 
                 if (!s_where.ignore(pos, expected))
@@ -1094,6 +1129,8 @@ bool ParserAlterCommand::parseImpl(Pos & pos, ASTPtr & node, Expected & expected
         command->statistics_decl = command->children.emplace_back(std::move(command_statistics_decl)).get();
     if (command_partition)
         command->partition = command->children.emplace_back(std::move(command_partition)).get();
+    if (command_partitions)
+        command->partitions = command->children.emplace_back(std::move(command_partitions)).get();
     if (command_predicate)
         command->predicate = command->children.emplace_back(std::move(command_predicate)).get();
     if (command_update_assignments)

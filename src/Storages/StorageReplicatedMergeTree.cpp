@@ -6591,7 +6591,28 @@ PartitionBlockNumbersHolder StorageReplicatedMergeTree::allocateBlockNumbersInAf
         return {{{affected_partition_id, block_number}}, std::move(block_number_holder)};
     }
 
-    /// TODO: Implement optimal block number acquisition algorithm in multiple (but not all) partitions
+    if (!mutation_affected_partition_ids.empty())
+    {
+        /// Lock only the specific affected partitions instead of all partitions.
+        EphemeralLocksInAllPartitions lock_holder(
+            fs::path(zookeeper_path) / "block_numbers",
+            "block-",
+            fs::path(zookeeper_path) / "temp",
+            block_data,
+            *zookeeper,
+            mutation_affected_partition_ids);
+
+        PartitionBlockNumbersHolder::BlockNumbersType block_numbers;
+        for (const auto & lock : lock_holder.getLocks())
+        {
+            block_numbers[lock.partition_id] = lock.number;
+            LOG_TRACE(log, "Allocated block number {} in partition {}", lock.number, lock.partition_id);
+        }
+
+        return {std::move(block_numbers), std::move(lock_holder)};
+    }
+
+    /// All partitions affected - lock everything.
     EphemeralLocksInAllPartitions lock_holder(
         fs::path(zookeeper_path) / "block_numbers",
         "block-",
@@ -6605,9 +6626,7 @@ PartitionBlockNumbersHolder StorageReplicatedMergeTree::allocateBlockNumbersInAf
         if (lock.partition_id.starts_with(MergeTreePartInfo::PATCH_PART_PREFIX))
             continue;
 
-        if (mutation_affected_partition_ids.empty() || mutation_affected_partition_ids.contains(lock.partition_id))
-            block_numbers[lock.partition_id] = lock.number;
-
+        block_numbers[lock.partition_id] = lock.number;
         LOG_TRACE(log, "Allocated block number {} in partition {}", lock.number, lock.partition_id);
     }
 
