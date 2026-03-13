@@ -7494,13 +7494,11 @@ std::set<String> MergeTreeData::getPartitionIdsAffectedByCommands(
 {
     std::set<String> affected_partition_ids;
     bool optimize_with_pruning = query_context->getSettingsRef()[Setting::optimize_mutations_with_partition_pruning];
-    bool has_explicit_partitions = false;
 
     for (const auto & command : commands)
     {
         if (command.partitions)
         {
-            has_explicit_partitions = true;
             for (const auto & partition_ast : command.partitions->children)
             {
                 affected_partition_ids.insert(
@@ -7510,7 +7508,6 @@ std::set<String> MergeTreeData::getPartitionIdsAffectedByCommands(
         }
         else if (command.partition)
         {
-            has_explicit_partitions = true;
             affected_partition_ids.insert(
                 getPartitionIDFromQuery(command.partition, query_context)
             );
@@ -7531,16 +7528,6 @@ std::set<String> MergeTreeData::getPartitionIdsAffectedByCommands(
             /// No partition and no predicate (e.g. MATERIALIZE_TTL) - affects all partitions
             affected_partition_ids.clear();
             break;
-        }
-    }
-
-    if (has_explicit_partitions && !affected_partition_ids.empty())
-    {
-        auto existing_partitions = getAllPartitionIds();
-        for (const auto & id : affected_partition_ids)
-        {
-            if (!existing_partitions.contains(id))
-                throw Exception(ErrorCodes::BAD_ARGUMENTS, "Partition '{}' doesn't exist", id);
         }
     }
 

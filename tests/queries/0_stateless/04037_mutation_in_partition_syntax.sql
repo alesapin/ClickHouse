@@ -104,7 +104,7 @@ DROP TABLE t_parse_lw_delete SYNC;
 -- Test 7: Missing WHERE clause after multi-partition
 ALTER TABLE system.one DELETE IN PARTITION '2024-01-01', '2024-01-02'; -- { clientError SYNTAX_ERROR }
 
--- Test 8: Non-existing partition - should throw
+-- Test 8: Non-existing partition - should succeed but affect no rows
 DROP TABLE IF EXISTS t_parse_neg_nonexist;
 CREATE TABLE t_parse_neg_nonexist (key UInt64, value String, dt Date)
 ENGINE = ReplicatedMergeTree('/clickhouse/tables/{database}/t_parse_neg_nonexist', '1')
@@ -112,7 +112,10 @@ PARTITION BY dt ORDER BY key;
 
 INSERT INTO t_parse_neg_nonexist VALUES (1, 'a', '2024-01-01');
 
-ALTER TABLE t_parse_neg_nonexist DELETE IN PARTITION '2099-12-31' WHERE 1; -- { serverError BAD_ARGUMENTS }
+ALTER TABLE t_parse_neg_nonexist DELETE IN PARTITION '2099-12-31' WHERE 1;
+
+SELECT 'test 8: non-existing partition';
+SELECT * FROM t_parse_neg_nonexist ORDER BY key;
 
 DROP TABLE t_parse_neg_nonexist SYNC;
 
