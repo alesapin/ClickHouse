@@ -7425,15 +7425,15 @@ std::unordered_set<String> MergeTreeData::getPartitionIDsFromQuery(const ASTs & 
     return partition_ids;
 }
 
-std::set<String> MergeTreeData::getPartitionIdsPrunedByPredicate(
+std::optional<std::set<String>> MergeTreeData::getPartitionIdsPrunedByPredicate(
     const ASTPtr & predicate, ContextPtr query_context) const
 {
     auto metadata_snapshot = getInMemoryMetadataPtr();
     if (!metadata_snapshot->hasPartitionKey())
-        return {};
+        return std::nullopt;
 
     if (!query_context->getSettingsRef()[Setting::use_partition_pruning])
-        return {};
+        return std::nullopt;
 
     auto columns = metadata_snapshot->getColumns().getAllPhysical();
 
@@ -7443,7 +7443,7 @@ std::set<String> MergeTreeData::getPartitionIdsPrunedByPredicate(
     auto actions_dag = ExpressionAnalyzer(predicate_clone, syntax_result, query_context).getActionsDAG(false);
 
     /// The predicate output is the node matching the predicate expression name.
-    /// getActionsDAG may include input columns in the outputs list, so we need
+    /// `getActionsDAG` may include input columns in the outputs list, so we need
     /// to find the correct node by name.
     String predicate_column_name = predicate_clone->getColumnName();
     const ActionsDAG::Node * predicate_node = nullptr;
@@ -7457,7 +7457,7 @@ std::set<String> MergeTreeData::getPartitionIdsPrunedByPredicate(
     }
 
     if (!predicate_node)
-        return {};
+        return std::nullopt;
 
     ActionsDAGWithInversionPushDown inverted_dag(predicate_node, query_context);
 
@@ -7468,13 +7468,16 @@ std::set<String> MergeTreeData::getPartitionIdsPrunedByPredicate(
         false /* strict */);
 
     if (partition_pruner.isUseless())
-        return {};
+        return std::nullopt;
 
     std::set<String> affected_partition_ids;
     {
         auto lock = readLockParts();
         for (const auto & part : getDataPartsStateRange(DataPartState::Active))
         {
+            if (part->info.getPartitionId().starts_with(MergeTreePartInfo::PATCH_PART_PREFIX))
+                continue;
+
             if (!partition_pruner.canBePruned(*part))
                 affected_partition_ids.insert(part->info.getPartitionId());
         }
@@ -7512,13 +7515,13 @@ std::set<String> MergeTreeData::getPartitionIdsAffectedByCommands(
         else if (optimize_with_pruning && command.predicate)
         {
             auto pruned = getPartitionIdsPrunedByPredicate(command.predicate, query_context);
-            if (pruned.empty())
+            if (!pruned.has_value())
             {
-                /// Pruning was not possible or all partitions are affected
+                /// Pruning was not possible, fall back to all partitions
                 affected_partition_ids.clear();
                 break;
             }
-            affected_partition_ids.insert(pruned.begin(), pruned.end());
+            affected_partition_ids.insert(pruned->begin(), pruned->end());
         }
         else
         {

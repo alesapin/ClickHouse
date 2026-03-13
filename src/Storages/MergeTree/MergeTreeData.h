@@ -1096,8 +1096,9 @@ public:
     std::set<String> getPartitionIdsAffectedByCommands(const MutationCommands & commands, ContextPtr query_context) const;
 
     /// Analyze the predicate and return partition IDs that cannot be pruned away.
-    /// Returns an empty set if pruning is not possible (e.g. no partition key, or predicate doesn't reference it).
-    std::set<String> getPartitionIdsPrunedByPredicate(const ASTPtr & predicate, ContextPtr query_context) const;
+    /// Returns nullopt if pruning is not possible (e.g. no partition key, predicate doesn't reference it,
+    /// or an error occurred during analysis). An empty set means zero partitions are affected.
+    std::optional<std::set<String>> getPartitionIdsPrunedByPredicate(const ASTPtr & predicate, ContextPtr query_context) const;
 
     /// Returns set of partition_ids of all Active parts
     std::unordered_set<String> getAllPartitionIds() const;
