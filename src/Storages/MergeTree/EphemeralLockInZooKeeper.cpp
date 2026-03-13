@@ -228,8 +228,9 @@ EphemeralLocksInAllPartitions::EphemeralLocksInAllPartitions(
 {
     String holder_path = znode_data.value_or(temp_path + "/" + EphemeralLockInZooKeeper::LEGACY_LOCK_OTHER);
 
-    Coordination::Requests lock_ops;
     std::vector<String> partitions(partition_ids.begin(), partition_ids.end());
+
+    Coordination::Requests lock_ops;
     for (const auto & partition : partitions)
     {
         String partition_path_prefix = block_numbers_path + "/" + partition + "/" + path_prefix;
@@ -239,6 +240,27 @@ EphemeralLocksInAllPartitions::EphemeralLocksInAllPartitions(
 
     Coordination::Responses lock_responses;
     Coordination::Error rc = zookeeper_.tryMulti(lock_ops, lock_responses);
+
+    if (rc == Coordination::Error::ZNONODE)
+    {
+        /// Some partition znodes don't exist yet — create them and retry.
+        for (const auto & partition : partitions)
+        {
+            String partition_path = block_numbers_path + "/" + partition;
+
+            Coordination::Requests create_ops;
+            create_ops.push_back(zkutil::makeCreateRequest(partition_path, "", zkutil::CreateMode::Persistent));
+            create_ops.push_back(zkutil::makeSetRequest(block_numbers_path, "", -1));
+
+            Coordination::Responses create_responses;
+            Coordination::Error code = zookeeper_.tryMulti(create_ops, create_responses);
+            if (code != Coordination::Error::ZOK && code != Coordination::Error::ZNODEEXISTS)
+                throw Coordination::Exception(code);
+        }
+
+        rc = zookeeper_.tryMulti(lock_ops, lock_responses);
+    }
+
     if (rc != Coordination::Error::ZOK)
         throw Coordination::Exception(rc);
 

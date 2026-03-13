@@ -130,3 +130,22 @@ INSERT INTO t_parse_neg_wrong_type VALUES (1, 1, 10);
 ALTER TABLE t_parse_neg_wrong_type DELETE IN PARTITION 'not_a_tuple' WHERE 1; -- { serverError INVALID_PARTITION_VALUE }
 
 DROP TABLE t_parse_neg_wrong_type SYNC;
+
+-- Test 10: Multi-partition where some partitions don't exist yet in ZK
+DROP TABLE IF EXISTS t_parse_new_parts;
+CREATE TABLE t_parse_new_parts (key UInt64, value String, dt Date)
+ENGINE = ReplicatedMergeTree('/clickhouse/tables/{database}/t_parse_new_parts', '1')
+PARTITION BY dt ORDER BY key;
+
+INSERT INTO t_parse_new_parts VALUES (1, 'a', '2024-01-01');
+
+-- '2024-01-02' partition doesn't exist yet, should be created automatically
+ALTER TABLE t_parse_new_parts DELETE IN PARTITION '2024-01-01', '2024-01-02' WHERE 1;
+
+-- Insert into the newly created partition to verify it works
+INSERT INTO t_parse_new_parts VALUES (2, 'b', '2024-01-01'), (3, 'c', '2024-01-02');
+
+SELECT 'test 10: multi-partition with new partition';
+SELECT * FROM t_parse_new_parts ORDER BY key;
+
+DROP TABLE t_parse_new_parts SYNC;
