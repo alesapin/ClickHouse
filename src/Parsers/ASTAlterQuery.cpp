@@ -47,6 +47,8 @@ ASTPtr ASTAlterCommand::clone() const
         res->statistics_decl = res->children.emplace_back(statistics_decl->clone()).get();
     if (partition)
         res->partition = res->children.emplace_back(partition->clone()).get();
+    if (partitions)
+        res->partitions = res->children.emplace_back(partitions->clone()).get();
     if (predicate)
         res->predicate = res->children.emplace_back(predicate->clone()).get();
     if (update_assignments)
