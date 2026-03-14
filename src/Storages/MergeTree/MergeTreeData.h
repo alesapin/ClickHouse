@@ -1093,7 +1093,9 @@ public:
     /// For ATTACH/DETACH/DROP/FORGET PARTITION.
     String getPartitionIDFromQuery(const ASTPtr & ast, ContextPtr context, const DataPartsLock * acquired_lock = nullptr) const;
     std::unordered_set<String> getPartitionIDsFromQuery(const ASTs & asts, ContextPtr context) const;
-    std::set<String> getPartitionIdsAffectedByCommands(const MutationCommands & commands, ContextPtr query_context) const;
+    /// Returns the set of partition IDs affected by mutation commands.
+    /// nullopt means all partitions are affected. An empty set means zero partitions are affected.
+    std::optional<std::set<String>> getPartitionIdsAffectedByCommands(const MutationCommands & commands, ContextPtr query_context) const;
 
     /// Analyze the predicate and return partition IDs that cannot be pruned away.
     /// Returns nullopt if pruning is not possible (e.g. no partition key, predicate doesn't reference it,

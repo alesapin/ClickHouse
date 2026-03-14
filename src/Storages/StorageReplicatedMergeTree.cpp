@@ -6571,28 +6571,31 @@ PartitionBlockNumbersHolder StorageReplicatedMergeTree::allocateBlockNumbersInAf
     ContextPtr query_context,
     const zkutil::ZooKeeperPtr & zookeeper) const
 {
-    const std::set<String> mutation_affected_partition_ids = getPartitionIdsAffectedByCommands(commands, query_context);
+    const auto mutation_affected_partition_ids = getPartitionIdsAffectedByCommands(commands, query_context);
     auto block_data = serializeCommittingBlockOpToString(op);
 
-    if (mutation_affected_partition_ids.size() == 1)
+    if (mutation_affected_partition_ids.has_value())
     {
-        const auto & affected_partition_id = *mutation_affected_partition_ids.cbegin();
-        auto block_number_holder = allocateBlockNumber(
-            affected_partition_id,
-            zookeeper,
-            {},
-            "",
-            block_data);
-
-        if (!block_number_holder.isLocked())
+        if (mutation_affected_partition_ids->empty())
             return {};
 
-        auto block_number = block_number_holder.getNumber();  /// Avoid possible UB due to std::move
-        return {{{affected_partition_id, block_number}}, std::move(block_number_holder)};
-    }
+        if (mutation_affected_partition_ids->size() == 1)
+        {
+            const auto & affected_partition_id = *mutation_affected_partition_ids->cbegin();
+            auto block_number_holder = allocateBlockNumber(
+                affected_partition_id,
+                zookeeper,
+                {},
+                "",
+                block_data);
 
-    if (!mutation_affected_partition_ids.empty())
-    {
+            if (!block_number_holder.isLocked())
+                return {};
+
+            auto block_number = block_number_holder.getNumber();  /// Avoid possible UB due to std::move
+            return {{{affected_partition_id, block_number}}, std::move(block_number_holder)};
+        }
+
         /// Lock only the specific affected partitions instead of all partitions.
         EphemeralLocksInAllPartitions lock_holder(
             fs::path(zookeeper_path) / "block_numbers",
@@ -6600,7 +6603,7 @@ PartitionBlockNumbersHolder StorageReplicatedMergeTree::allocateBlockNumbersInAf
             fs::path(zookeeper_path) / "temp",
             block_data,
             *zookeeper,
-            mutation_affected_partition_ids);
+            *mutation_affected_partition_ids);
 
         PartitionBlockNumbersHolder::BlockNumbersType block_numbers;
         for (const auto & lock : lock_holder.getLocks())

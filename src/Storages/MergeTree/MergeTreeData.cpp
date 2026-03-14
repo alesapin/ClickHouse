@@ -7489,7 +7489,7 @@ std::optional<std::set<String>> MergeTreeData::getPartitionIdsPrunedByPredicate(
     return affected_partition_ids;
 }
 
-std::set<String> MergeTreeData::getPartitionIdsAffectedByCommands(
+std::optional<std::set<String>> MergeTreeData::getPartitionIdsAffectedByCommands(
     const MutationCommands & commands, ContextPtr query_context) const
 {
     std::set<String> affected_partition_ids;
@@ -7518,16 +7518,14 @@ std::set<String> MergeTreeData::getPartitionIdsAffectedByCommands(
             if (!pruned.has_value())
             {
                 /// Pruning was not possible, fall back to all partitions
-                affected_partition_ids.clear();
-                break;
+                return std::nullopt;
             }
             affected_partition_ids.insert(pruned->begin(), pruned->end());
         }
         else
         {
             /// No partition and no predicate (e.g. MATERIALIZE_TTL) - affects all partitions
-            affected_partition_ids.clear();
-            break;
+            return std::nullopt;
         }
     }
 
