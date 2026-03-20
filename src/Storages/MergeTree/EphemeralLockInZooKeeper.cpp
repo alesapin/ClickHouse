@@ -223,7 +223,8 @@ EphemeralLocksInAllPartitions::EphemeralLocksInAllPartitions(
     const String & temp_path,
     const std::optional<String> & znode_data,
     zkutil::ZooKeeper & zookeeper_,
-    const std::set<String> & partition_ids)
+    const std::set<String> & partition_ids,
+    std::optional<int32_t> expected_block_numbers_version)
     : zookeeper(&zookeeper_)
 {
     String holder_path = znode_data.value_or(temp_path + "/" + EphemeralLockInZooKeeper::LEGACY_LOCK_OTHER);
@@ -237,6 +238,11 @@ EphemeralLocksInAllPartitions::EphemeralLocksInAllPartitions(
         lock_ops.push_back(zkutil::makeCreateRequest(
                 partition_path_prefix, holder_path, zkutil::CreateMode::EphemeralSequential));
     }
+
+    /// If a version check was requested, add it to detect new partitions appearing
+    /// between the time we decided which partitions to lock and the actual locking.
+    if (expected_block_numbers_version.has_value())
+        lock_ops.push_back(zkutil::makeCheckRequest(block_numbers_path, *expected_block_numbers_version));
 
     Coordination::Responses lock_responses;
     Coordination::Error rc = zookeeper_.tryMulti(lock_ops, lock_responses);
@@ -256,6 +262,17 @@ EphemeralLocksInAllPartitions::EphemeralLocksInAllPartitions(
             Coordination::Error code = zookeeper_.tryMulti(create_ops, create_responses);
             if (code != Coordination::Error::ZOK && code != Coordination::Error::ZNODEEXISTS)
                 throw Coordination::Exception(code);
+        }
+
+        /// After creating partition znodes, we need to re-read the version since
+        /// the creates above bump block_numbers_path version.
+        if (expected_block_numbers_version.has_value())
+        {
+            Coordination::Stat stat;
+            zookeeper_.get(block_numbers_path, &stat);
+
+            lock_ops.pop_back();
+            lock_ops.push_back(zkutil::makeCheckRequest(block_numbers_path, stat.version));
         }
 
         rc = zookeeper_.tryMulti(lock_ops, lock_responses);

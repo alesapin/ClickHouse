@@ -114,13 +114,16 @@ public:
         zkutil::ZooKeeper & zookeeper_);
 
     /// Acquires block number locks only in the specified partitions (not all).
+    /// If expected_block_numbers_version is provided, a version check on block_numbers_path
+    /// is included in the multi-op. Throws ZBADVERSION if a new partition appeared.
     EphemeralLocksInAllPartitions(
         const String & block_numbers_path,
         const String & path_prefix,
         const String & temp_path,
         const std::optional<String> & znode_data,
         zkutil::ZooKeeper & zookeeper_,
-        const std::set<String> & partition_ids);
+        const std::set<String> & partition_ids,
+        std::optional<int32_t> expected_block_numbers_version = std::nullopt);
 
     EphemeralLocksInAllPartitions() = default;
 
