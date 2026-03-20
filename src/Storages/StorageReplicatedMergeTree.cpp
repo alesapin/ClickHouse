@@ -6607,23 +6607,6 @@ PartitionBlockNumbersHolder StorageReplicatedMergeTree::allocateBlockNumbersInAf
             if (affected.empty())
                 return {};
 
-            if (affected.size() == 1)
-            {
-                const auto & affected_partition_id = *affected.cbegin();
-                auto block_number_holder = allocateBlockNumber(
-                    affected_partition_id,
-                    zookeeper,
-                    {},
-                    "",
-                    block_data);
-
-                if (!block_number_holder.isLocked())
-                    return {};
-
-                auto block_number = block_number_holder.getNumber();  /// Avoid possible UB due to std::move
-                return {{{affected_partition_id, block_number}}, std::move(block_number_holder)};
-            }
-
             try
             {
                 /// Lock only the specific affected partitions instead of all partitions.
