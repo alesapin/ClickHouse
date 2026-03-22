@@ -183,8 +183,12 @@ bool supportsAtomicRename(std::string * out_message)
 
 #else
 
+#if !defined(RENAME_NOREPLACE)
 #define RENAME_NOREPLACE -1
+#endif
+#if !defined(RENAME_EXCHANGE)
 #define RENAME_EXCHANGE -1
+#endif
 
 namespace DB
 {

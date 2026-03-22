@@ -486,6 +486,10 @@ SET(ARROW_SRCS "${LIBRARY_DIR}/util/compression_zstd.cc" ${ARROW_SRCS})
 add_library(_arrow ${ARROW_SRCS})
 add_library(ch_contrib::arrow ALIAS _arrow)
 
+if (OS_ANDROID)
+    target_compile_definitions(_arrow PRIVATE USE_OS_TZDB=1 BUILD_TZ_LIB)
+endif ()
+
 target_link_libraries(_arrow PRIVATE
     boost::filesystem
 

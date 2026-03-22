@@ -104,7 +104,10 @@ target_include_directories(_c-ares SYSTEM PUBLIC
 # ares_build.h and ares_config.h. To update, run the original CMake build in c-ares for each platform and copy the headers into the
 # platform-specific folder.
 # For the platform-specific compile definitions, see c-ares top-level CMakeLists.txt.
-if (OS_LINUX)
+if (OS_ANDROID)
+    target_include_directories(_c-ares SYSTEM PUBLIC "${ClickHouse_SOURCE_DIR}/contrib/c-ares-cmake/android")
+    target_compile_definitions(_c-ares PRIVATE -D_GNU_SOURCE)
+elseif (OS_LINUX)
     target_include_directories(_c-ares SYSTEM PUBLIC "${ClickHouse_SOURCE_DIR}/contrib/c-ares-cmake/linux")
     target_compile_definitions(_c-ares PRIVATE -D_GNU_SOURCE -D_POSIX_C_SOURCE=199309L -D_XOPEN_SOURCE=600)
 elseif (OS_DARWIN)

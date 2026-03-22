@@ -195,6 +195,10 @@ static int poco_ssl_probe_and_set_default_ca_location(SSL_CTX *ctx, Context::CAP
 #ifdef _AIX
 		"/var/ssl/certs/ca-bundle.crt",
 #endif
+#ifdef __ANDROID__
+		"/data/data/com.termux/files/usr/etc/tls/cert.pem",
+		"/system/etc/security/cacerts",
+#endif
 	};
 
 	const char * dir = nullptr;

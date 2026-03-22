@@ -29,6 +29,10 @@ function (build_clang_builtin target_triple OUT_VARIABLE)
     elseif (target_triple STREQUAL "e2k-linux-gnu")
         set (BUILTINS_TOOLCHAIN_FILE "${ClickHouse_SOURCE_DIR}/cmake/linux/toolchain-e2k.cmake")
         set (BUILTINS_TARGET "lib/linux/libclang_rt.builtins-e2k.a")
+    # Android target triples
+    elseif (target_triple STREQUAL "aarch64-none-linux-android28")
+        set (BUILTINS_TOOLCHAIN_FILE "${ClickHouse_SOURCE_DIR}/android/toolchain-android-aarch64.cmake")
+        set (BUILTINS_TARGET "lib/linux/libclang_rt.builtins-aarch64-android.a")
     # FREEBSD target triples
     elseif (target_triple STREQUAL "aarch64-unknown-freebsd13")
         set (BUILTINS_TOOLCHAIN_FILE "${ClickHouse_SOURCE_DIR}/cmake/freebsd/toolchain-aarch64.cmake")

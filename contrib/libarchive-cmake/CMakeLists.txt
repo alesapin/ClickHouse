@@ -138,6 +138,9 @@ else()
     target_include_directories(_libarchive PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 endif()
 target_include_directories(_libarchive PUBLIC "${LIBRARY_DIR}/libarchive")
+if (OS_ANDROID)
+    target_include_directories(_libarchive PRIVATE "${LIBRARY_DIR}/contrib/android/include")
+endif ()
 
 target_compile_definitions(_libarchive PUBLIC
     HAVE_CONFIG_H

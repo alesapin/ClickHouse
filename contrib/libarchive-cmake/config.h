@@ -694,7 +694,9 @@ typedef uint64_t uintmax_t;
 /* #undef HAVE_LCHFLAGS */
 
 /* Define to 1 if you have the `lchmod' function. */
+#if !defined(__ANDROID__)
 #define HAVE_LCHMOD 1
+#endif
 
 /* Define to 1 if you have the `lchown' function. */
 #define HAVE_LCHOWN 1

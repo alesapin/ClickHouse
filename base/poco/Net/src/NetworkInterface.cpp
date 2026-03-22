@@ -1070,6 +1070,8 @@ namespace Net {
 namespace {
 
 
+#if POCO_OS != POCO_OS_ANDROID
+
 static NetworkInterface::Type fromNative(unsigned arphrd)
 {
 	switch (arphrd)
@@ -1087,8 +1089,6 @@ static NetworkInterface::Type fromNative(unsigned arphrd)
 	default:               return NetworkInterface::NI_TYPE_OTHER;
 	}
 }
-
-#if POCO_OS != POCO_OS_ANDROID
 
 void setInterfaceParams(struct ifaddrs* iface, NetworkInterfaceImpl& impl)
 {

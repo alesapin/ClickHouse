@@ -18,6 +18,11 @@
 #include <unordered_set>
 #include <Common/DNSPTRResolverProvider.h>
 
+#if defined(OS_ANDROID)
+#include <ares.h>
+#include <arpa/inet.h>
+#endif
+
 namespace ProfileEvents
 {
     extern const Event DNSError;
@@ -98,6 +103,96 @@ void splitHostAndPort(const std::string & host_and_port, std::string & out_host,
         throw Exception(ErrorCodes::BAD_ARGUMENTS, "Port must be numeric");
 }
 
+
+#if defined(OS_ANDROID)
+/// On Android, getaddrinfo communicates with the netd daemon which may not be
+/// accessible from native binaries (e.g. in Termux). Use c-ares as it does
+/// direct DNS queries over UDP/TCP, similar to dig.
+DNSResolver::IPAddresses hostByNameCares(const std::string & host)
+{
+    DNSResolver::IPAddresses addresses;
+
+    ares_channel channel;
+    int status = ares_init(&channel);
+    if (status != ARES_SUCCESS)
+    {
+        LOG_WARNING(getLogger("DNSResolver"), "c-ares init failed: {}", ares_strerror(status));
+        return addresses;
+    }
+
+    /// Configure with Google DNS as fallback since Android may not have /etc/resolv.conf
+    struct ares_addr_port_node servers;
+    memset(&servers, 0, sizeof(servers));
+    servers.family = AF_INET;
+    servers.next = nullptr;
+    inet_pton(AF_INET, "8.8.8.8", &servers.addr.addr4);
+    servers.udp_port = 53;
+    servers.tcp_port = 53;
+
+    /// Try system resolv.conf first; if it doesn't exist, use our fallback
+    if (ares_set_servers_ports(channel, &servers) != ARES_SUCCESS)
+    {
+        ares_destroy(channel);
+        return addresses;
+    }
+
+    struct CallbackData
+    {
+        DNSResolver::IPAddresses * addresses;
+        bool done;
+        int status;
+    };
+
+    CallbackData cb_data{&addresses, false, 0};
+
+    auto callback = [](void * arg, int cb_status, int /*timeouts*/, struct hostent * hostent)
+    {
+        auto * data = static_cast<CallbackData *>(arg);
+        data->done = true;
+        data->status = cb_status;
+        if (cb_status == ARES_SUCCESS && hostent)
+        {
+            for (char ** addr = hostent->h_addr_list; *addr; ++addr)
+            {
+                if (hostent->h_addrtype == AF_INET)
+                {
+                    struct in_addr in;
+                    memcpy(&in, *addr, sizeof(in));
+                    data->addresses->emplace_back(Poco::Net::IPAddress(&in, sizeof(in)));
+                }
+                else if (hostent->h_addrtype == AF_INET6)
+                {
+                    struct in6_addr in6;
+                    memcpy(&in6, *addr, sizeof(in6));
+                    data->addresses->emplace_back(Poco::Net::IPAddress(&in6, sizeof(in6)));
+                }
+            }
+        }
+    };
+
+    ares_gethostbyname(channel, host.c_str(), AF_INET, callback, &cb_data);
+
+    /// Process c-ares events
+    int nfds;
+    fd_set read_fds, write_fds;
+    struct timeval tv;
+    while (!cb_data.done)
+    {
+        FD_ZERO(&read_fds);
+        FD_ZERO(&write_fds);
+        nfds = ares_fds(channel, &read_fds, &write_fds);
+        if (nfds == 0)
+            break;
+        struct timeval * tvp = ares_timeout(channel, nullptr, &tv);
+        select(nfds, &read_fds, &write_fds, nullptr, tvp);
+        ares_process(channel, &read_fds, &write_fds);
+    }
+
+    ares_destroy(channel);
+    return addresses;
+}
+#endif
+
 DNSResolver::IPAddresses hostByName(const std::string & host)
 {
     /// Do not resolve IPv6 (or IPv4) if no local IPv6 (or IPv4) addresses are configured.
@@ -116,6 +211,16 @@ DNSResolver::IPAddresses hostByName(const std::string & host)
         LOG_WARNING(getLogger("DNSResolver"), "Cannot resolve host ({}), error {}: {}.", host, e.code(), e.name());
         addresses.clear();
     }
+
+#if defined(OS_ANDROID)
+    /// On Android, getaddrinfo may fail because the netd daemon is not accessible
+    /// from native binaries. Fall back to c-ares which does direct DNS queries.
+    if (addresses.empty())
+    {
+        LOG_INFO(getLogger("DNSResolver"), "Falling back to c-ares for host resolution ({})", host);
+        addresses = hostByNameCares(host);
+    }
+#endif
 
     if (addresses.empty())
     {

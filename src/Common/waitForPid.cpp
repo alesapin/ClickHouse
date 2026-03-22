@@ -31,7 +31,7 @@ enum PollPidResult
 
 }
 
-#if defined(OS_LINUX)
+#if defined(OS_LINUX) || defined(OS_ANDROID)
 
 #include <poll.h>
 #include <string>

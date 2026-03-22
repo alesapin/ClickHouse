@@ -54,3 +54,7 @@ endif ()
 # Note: right now cmake 4.2.1 does not recognize "set (CMAKE_C_STANDARD 2y)"
 no_warning(c2y-extensions)
 no_warning(c23-extensions) # For #embed
+if (OS_ANDROID)
+    # Android NDK headers use _Nullable/_Nonnull annotations extensively
+    no_warning(nullable-to-nonnull-conversion)
+endif ()

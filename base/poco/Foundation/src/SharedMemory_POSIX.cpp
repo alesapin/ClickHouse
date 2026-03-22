@@ -21,6 +21,12 @@
 #include <fcntl.h>
 #include <unistd.h>
 
+#if defined(__ANDROID__)
+/// Android does not provide shm_open/shm_unlink
+static int shm_open(const char *, int, mode_t) { errno = ENOSYS; return -1; }
+static int shm_unlink(const char *) { errno = ENOSYS; return -1; }
+#endif
+
 
 namespace Poco {
 

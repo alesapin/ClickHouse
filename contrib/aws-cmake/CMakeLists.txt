@@ -1,6 +1,6 @@
 set(ENABLE_AWS_S3_DEFAULT OFF)
 
-if(ENABLE_LIBRARIES AND (OS_LINUX OR OS_DARWIN) AND TARGET OpenSSL::Crypto)
+if(ENABLE_LIBRARIES AND (OS_LINUX OR OS_DARWIN OR OS_ANDROID) AND TARGET OpenSSL::Crypto)
     set(ENABLE_AWS_S3_DEFAULT ON)
 endif()
 
@@ -9,7 +9,7 @@ option(ENABLE_AWS_S3 "Enable AWS S3" ${ENABLE_AWS_S3_DEFAULT})
 if(ENABLE_AWS_S3)
     if(NOT TARGET OpenSSL::Crypto)
         message (${RECONFIGURE_MESSAGE_LEVEL} "Can't use AWS SDK without OpenSSL")
-    elseif(NOT (OS_LINUX OR OS_DARWIN))
+    elseif(NOT (OS_LINUX OR OS_DARWIN OR OS_ANDROID))
         message (${RECONFIGURE_MESSAGE_LEVEL} "Can't use AWS SDK with platform ${CMAKE_SYSTEM_NAME}")
     endif()
 endif()
@@ -44,7 +44,7 @@ if (CMAKE_BUILD_TYPE_UC STREQUAL "DEBUG")
     list(APPEND AWS_PRIVATE_COMPILE_DEFS "-DDEBUG_BUILD")
 endif()
 
-if (OS_LINUX)
+if (OS_LINUX OR OS_ANDROID)
     list(APPEND AWS_PRIVATE_COMPILE_DEFS "-DAWS_ENABLE_EPOLL")
 elseif (OS_DARWIN)
     list(APPEND AWS_PRIVATE_COMPILE_DEFS "-DAWS_ENABLE_KQUEUE")
@@ -117,7 +117,7 @@ file(GLOB AWS_SDK_CORE_SRC
     "${AWS_SDK_CORE_DIR}/source/utils/xml/*.cpp"
 )
 
-if(OS_LINUX OR OS_DARWIN)
+if(OS_LINUX OR OS_DARWIN OR OS_ANDROID)
     file(GLOB AWS_SDK_CORE_NET_SRC "${AWS_SDK_CORE_DIR}/source/net/linux-shared/*.cpp")
     file(GLOB AWS_SDK_CORE_PLATFORM_SRC "${AWS_SDK_CORE_DIR}/source/platform/linux-shared/*.cpp")
 else()
@@ -177,7 +177,7 @@ file(GLOB AWS_CAL_SRC
 )
 
 if (ENABLE_OPENSSL_ENCRYPTION)
-    if (OS_LINUX)
+    if (OS_LINUX OR OS_ANDROID)
         file(GLOB AWS_CAL_OS_SRC
             "${AWS_CAL_DIR}/source/unix/*.c"
         )
@@ -223,7 +223,7 @@ if (AWS_ARCH_INTEL)
         "${AWS_COMMON_DIR}/source/arch/intel/asm/*.c"
     )
 elseif (AWS_ARCH_ARM64 OR AWS_ARCH_ARM32)
-    if (OS_LINUX)
+    if (OS_LINUX OR OS_ANDROID)
         file(GLOB AWS_COMMON_ARCH_SRC
             "${AWS_COMMON_DIR}/source/arch/arm/auxv/cpuid.c"
         )
@@ -293,7 +293,7 @@ file(GLOB AWS_IO_SRC
     "${AWS_IO_DIR}/source/*.c"
 )
 
-if (OS_LINUX)
+if (OS_LINUX OR OS_ANDROID)
     file(GLOB AWS_IO_OS_SRC
         "${AWS_IO_DIR}/source/linux/*.c"
         "${AWS_IO_DIR}/source/posix/*.c"

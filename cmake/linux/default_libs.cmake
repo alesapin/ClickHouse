@@ -66,8 +66,15 @@ set(CMAKE_EXE_LINKER_FLAGS  "${CMAKE_EXE_LINKER_FLAGS} -Wl,--whole-archive ${BUI
 set(CMAKE_CXX_STANDARD_LIBRARIES ${DEFAULT_LIBS})
 set(CMAKE_C_STANDARD_LIBRARIES ${DEFAULT_LIBS})
 
-add_library(Threads::Threads INTERFACE IMPORTED)
-set_target_properties(Threads::Threads PROPERTIES INTERFACE_LINK_LIBRARIES pthread)
+if (OS_ANDROID)
+    # Android includes pthread in libc, so create a no-op pthread target
+    # for libraries that link to it directly.
+    add_library(pthread INTERFACE)
+    add_library(Threads::Threads INTERFACE IMPORTED)
+else ()
+    add_library(Threads::Threads INTERFACE IMPORTED)
+    set_target_properties(Threads::Threads PROPERTIES INTERFACE_LINK_LIBRARIES pthread)
+endif ()
 
 include (cmake/unwind.cmake)
 include (cmake/cxx.cmake)
